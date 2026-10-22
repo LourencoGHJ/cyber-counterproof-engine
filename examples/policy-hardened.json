@@ -1,0 +1,17 @@
+{
+  "name": "lab-hardened-example",
+  "input_policy": "drop",
+  "allow_loopback": true,
+  "allow_established_related": true,
+  "rules": [
+    {
+      "description": "Permitir loopback"
+    },
+    {
+      "description": "Permitir tráfego established/related"
+    },
+    {
+      "description": "Bloquear por omissão o tráfego de entrada"
+    }
+  ]
+}

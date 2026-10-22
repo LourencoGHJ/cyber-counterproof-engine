@@ -1,0 +1,11 @@
+{
+  "name": "lab-insecure-example",
+  "input_policy": "accept",
+  "allow_loopback": true,
+  "allow_established_related": true,
+  "rules": [
+    {
+      "description": "Exemplo deliberadamente permissivo para demonstrar a deteção"
+    }
+  ]
+}

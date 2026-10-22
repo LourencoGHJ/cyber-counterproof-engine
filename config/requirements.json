@@ -1,0 +1,47 @@
+{
+  "requirements_id": "baseline-v1",
+  "requirements": [
+    {
+      "id": "REQ-INPUT-DENY-BY-DEFAULT",
+      "description": "A política de entrada deve bloquear por omissão.",
+      "type": "default_input_policy",
+      "expected": "drop",
+      "severity": "high"
+    },
+    {
+      "id": "REQ-SSH-NOT-GLOBAL",
+      "description": "SSH não deve estar acessível a partir de qualquer origem.",
+      "type": "service_not_globally_exposed",
+      "service": "ssh",
+      "severity": "high"
+    },
+    {
+      "id": "REQ-LOOPBACK-ALLOWED",
+      "description": "Deve existir uma regra explícita de loopback permitida.",
+      "type": "required_rule",
+      "rule_id": "allow-loopback",
+      "expected_action": "accept",
+      "severity": "medium"
+    }
+  ],
+  "traffic_tests": [
+    {
+      "id": "TEST-SSH-TRUSTED",
+      "description": "Origem de laboratório para SSH deve ser permitida pelo modelo.",
+      "source": "192.0.2.10",
+      "destination_port": 22,
+      "protocol": "tcp",
+      "expected": "accept",
+      "service": "ssh"
+    },
+    {
+      "id": "TEST-SSH-UNTRUSTED",
+      "description": "Origem externa ao intervalo autorizado não deve corresponder à regra SSH.",
+      "source": "198.51.100.25",
+      "destination_port": 22,
+      "protocol": "tcp",
+      "expected": "drop",
+      "service": "ssh"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+[console_scripts]
+cce = cce.cli:main
