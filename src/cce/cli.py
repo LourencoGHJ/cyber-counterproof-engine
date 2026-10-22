@@ -1,5 +1,7 @@
 """CLI do Cyber Counterproof Engine."""
 from __future__ import annotations
+from cce.drift import compare_policies
+from cce.report import build_report, write_report, sha256_file
 
 import argparse
 import sys
@@ -12,7 +14,8 @@ from cce.nftables import (
     validate_rules_file,
     write_json_report,
 )
-from cce.report import build_report, write_report
+
+
 
 
 def make_parser():
@@ -44,7 +47,18 @@ def make_parser():
         action="store_true",
         help="Incluir ruleset completo no relatório.",
     )
+
+    # Novo comando: comparação de políticas
+    compare = subs.add_parser(
+        "compare-policy",
+        help="Comparar política esperada com política observada.",
+    )
+    compare.add_argument("--expected", required=True)
+    compare.add_argument("--observed", required=True)
+    compare.add_argument("--output", required=True)
+
     return parser
+
 
 
 def main():
@@ -81,6 +95,55 @@ def main():
                 )
 
             return 0 if result["status"] == "PASS" else 1
+
+
+        if args.command == "compare-policy":
+            expected = load_json(args.expected)
+            observed = load_json(args.observed)
+
+            result = compare_policies(expected, observed)
+
+            report = {
+                "schema_version": "1.0",
+                "engine": {
+                    "name": "Cyber Counterproof Engine",
+                    "version": "0.1.0",
+                },
+                "input_evidence": {
+                    "expected": {
+                        "path": args.expected,
+                        "sha256": sha256_file(args.expected),
+                    },
+                    "observed": {
+                        "path": args.observed,
+                        "sha256": sha256_file(args.observed),
+                    },
+                },
+                "result": result,
+                "integrity_note": (
+                    "Os hashes identificam os ficheiros de entrada; "
+                    "não constituem uma assinatura digital."
+                ),
+            }
+
+            write_report(report, args.output)
+
+            print(
+                f"CCE: {result['status']} | "
+                f"Regras esperadas: {result['summary']['expected_rules']} | "
+                f"Regras observadas: {result['summary']['observed_rules']} | "
+                f"Divergências: {result['summary']['findings_total']}"
+            )
+            print(f"Relatório: {args.output}")
+
+            for finding in result["findings"]:
+                print(
+                    f"[{finding['severity'].upper()}] "
+                    f"{finding['code']}: regra {finding['rule_id']}"
+                )
+
+            return 0 if result["status"] == "PASS" else 1
+
 
         if args.command == "validate-nft":
             result = validate_rules_file(args.file)
