@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.coverage
+*.egg-info/
 reports/*.json
 !reports/.gitkeep
-.DS_Store

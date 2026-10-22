@@ -1,0 +1,7 @@
+table inet cce_validation {
+    chain input {
+        type filter hook input priority 0; policy drop;
+        iifname "lo" accept
+        ct state established,related accept
+    }
+}
