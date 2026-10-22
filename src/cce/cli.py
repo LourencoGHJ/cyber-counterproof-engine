@@ -1,12 +1,20 @@
 """CLI do Cyber Counterproof Engine."""
 from __future__ import annotations
-from cce.drift import compare_policies
-from cce.report import build_report, write_report, sha256_file
 
 import argparse
 import sys
 
+from cce.drift import compare_policies
 from cce.engine import analyze
+from cce.models import InputError, load_json, validate_policy, validate_requirements
+from cce.nftables import (
+    NftablesError,
+    inspect_live_ruleset,
+    validate_rules_file,
+    write_json_report,
+)
+from cce.report import build_report, write_report, sha256_file
+
 from cce.models import InputError, load_json, validate_policy, validate_requirements
 from cce.nftables import (
     NftablesError,
@@ -191,9 +199,14 @@ def main():
     except (InputError, NftablesError, OSError) as exc:
         print(f"ERRO: {exc}", file=sys.stderr)
         return 2
+    except ValueError as exc:
+        if args.command != "compare-policy":
+            raise
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 2
 
     return 2
 
-
 if __name__ == "__main__":
     raise SystemExit(main())
+
