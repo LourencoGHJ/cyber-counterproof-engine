@@ -11,7 +11,6 @@ jobs:
     steps:
       - name: Obter código
         uses: actions/checkout@v4
-
       - name: Instalar Python
         uses: actions/setup-python@v5
         with:
@@ -19,6 +18,21 @@ jobs:
           cache: pip
       - name: Instalar projeto e dependências de teste
         run: python -m pip install -e ".[dev]"
+	      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.6"
+          terraform_wrapper: false
+      - name: Validar configuração Terraform
+        working-directory: infra/terraform
+        run: |
+          terraform fmt -check
+          terraform init -backend=false
+          terraform validate
+      - name: Analisar segurança IaC com Checkov
+        run: |
+          python -m pip install checkov
+          checkov -f infra/terraform/main.tf --framework terraform --compact
       - name: Executar testes
         run: python -m pytest -v
       - name: Analisar segurança do código Python
