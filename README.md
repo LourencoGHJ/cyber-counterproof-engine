@@ -1,79 +1,50 @@
+O Cyber Counterproof Engine (CCE) é um projeto pessoal de cibersegurança que permite explorar competências técnicas relevantes para áreas como Security Engineering e DevSecOps. O desenvolvimento do projeto procura aprofundar conhecimentos em segurança defensiva, administração de sistemas Linux, validação de políticas de firewall, automatização e testes de software.
 
-# Cyber Counterproof Engine (CCE)
+Security Engineer
 
-**Python · Linux · nftables · Terraform · Checkov · GitHub Actions**
+Estado: Base técnica relevante para funções júnior
 
-## Sobre o projeto
+O CCE explora conceitos e práticas relacionados com engenharia de segurança, nomeadamente:
 
-O **Cyber Counterproof Engine (CCE)** é um projeto de engenharia de segurança dedicado à validação de políticas defensivas, à análise de configurações e à produção de evidências técnicas.
+Segurança defensiva e validação de políticas de segurança.
 
-Desenvolvido em Python, o projeto integra testes automatizados, análise de regras `nftables`, validação de políticas de segurança e geração de relatórios estruturados. O pipeline de integração contínua (CI), implementado com GitHub Actions, incorpora verificações de qualidade e segurança, incluindo análise estática com Bandit, auditoria de dependências com `pip-audit` e validação de Infraestrutura como Código (IaC) com Terraform e Checkov.
+Administração e utilização de sistemas Linux.
 
-O objetivo do CCE é evoluir para um sistema capaz de identificar configurações incorretas, verificar a eficácia das correções em ambientes controlados e documentar os resultados de forma reproduzível.
+Análise de configurações de firewall com nftables.
 
-## Objetivos
+Deteção de divergências entre políticas de referência e configurações observadas.
 
-- Validar políticas e configurações de segurança defensiva.
-- Automatizar testes e verificações de segurança.
-- Analisar regras de firewall Linux através de `nftables`.
-- Integrar verificações de segurança de IaC no pipeline de CI.
-- Produzir relatórios estruturados que facilitem a análise dos resultados.
-- Evoluir para a validação de medidas corretivas em ambientes isolados e controlados.
+Monitorização periódica e registo de resultados.
 
-## Tecnologias
+Testes automatizados para verificar o comportamento da aplicação.
 
-| Tecnologia | Finalidade |
-|---|---|
-| Python | Desenvolvimento do motor de validação e dos testes automatizados. |
-| Linux | Ambiente de referência para os controlos de segurança do sistema. |
-| nftables | Análise e validação de regras de firewall Linux. |
-| Terraform | Definição e validação de configurações de infraestrutura como código. |
-| Checkov | Análise estática de configurações IaC para identificar problemas de segurança. |
-| GitHub Actions | Automatização do pipeline de integração contínua. |
-| Bandit | Análise estática de segurança do código Python. |
-| pip-audit | Identificação de vulnerabilidades conhecidas nas dependências Python. |
-| pytest | Execução de testes automatizados. |
-| JSON | Representação estruturada dos relatórios de validação. |
+Estas componentes constituem uma base prática para continuar a desenvolver competências relevantes para funções de Junior Security Engineer e outras posições relacionadas com segurança de sistemas e infraestrutura.
 
-## Integração contínua e segurança
+DevSecOps Engineer
 
-O projeto utiliza GitHub Actions para automatizar verificações durante o desenvolvimento. O pipeline inclui testes automatizados, verificações de segurança do código e das dependências, bem como validação Terraform e análise estática com Checkov.
+Estado: Em desenvolvimento
 
-Esta abordagem permite detetar problemas mais cedo no ciclo de desenvolvimento e criar uma base para integrar futuras verificações de segurança de forma sistemática.
+O CCE também serve como base de aprendizagem para práticas de automatização de segurança associadas a DevSecOps, através da utilização de Python, testes automatizados e ferramentas de desenvolvimento.
 
-## Evolução prevista
+Para aprofundar esta vertente, o projeto poderá evoluir através da integração de:
 
-As próximas etapas de desenvolvimento incluem:
+CI/CD: execução automática de testes e verificações de segurança em pipelines.
 
-1. Reforçar os testes positivos e negativos para distinguir configurações seguras de configurações deliberadamente vulneráveis.
-2. Integrar os resultados das ferramentas de análise nos relatórios do CCE.
-3. Desenvolver um laboratório isolado para testar configurações e correções sem afetar sistemas reais.
-4. Melhorar a rastreabilidade e a reprodução dos resultados.
-5. Expandir a validação de controlos defensivos a outros cenários de infraestrutura e segurança cloud.
+SAST: análise estática do código para identificar potenciais problemas de segurança.
 
-## Licença
+SCA: análise de dependências para identificar componentes vulneráveis.
 
-A licença do projeto deverá ser indicada de acordo com o conteúdo do ficheiro `LICENSE` na raiz do repositório. Se for adotada a licença MIT, o ficheiro deverá conter os respetivos termos antes de o projeto ser apresentado como licenciado ao abrigo dessa licença.
+Secret Scanning: deteção de credenciais ou segredos expostos no repositório.
 
-# Cyber Counterproof Engine (CCE)
+Segurança de contentores: validação de imagens Docker e configurações de execução.
 
-**Protótipo defensivo para validar políticas de firewall e produzir evidência reproduzível.**
+Quality Gates: definição de critérios que impeçam a integração de alterações que não cumpram os requisitos de segurança.
 
-O CCE compara uma política declarativa com um conjunto de requisitos de segurança, executa testes determinísticos sobre o comportamento modelado e gera um relatório JSON com hashes SHA-256.
+Estas melhorias representam objetivos de evolução do projeto, não funcionalidades que devam ser consideradas implementadas antes de serem desenvolvidas e testadas.
 
-> **Estado:** MVP educativo. Os testes desta versão operam sobre um modelo de política em JSON. Não alteram `nftables`, não executam ataques contra sistemas e não provam que o firewall real está corretamente configurado. Essa integração será uma fase posterior, isolada e explicitamente autorizada.
+Objetivo de Desenvolvimento
 
-## Funcionalidades
+O objetivo é evoluir o CCE de uma ferramenta de validação e monitorização de políticas de segurança para um projeto mais abrangente de automatização de controlos de segurança, aplicando progressivamente princípios de Security Engineering e DevSecOps.
 
-- Validação de formato e campos da política.
-- Verificações de segurança: política de entrada permissiva, regras de entrada demasiado amplas e exposição de serviços.
-- Testes de comportamento modelado para tráfego permitido/bloqueado.
-- Relatório JSON com timestamp UTC, resultado, descobertas, testes e SHA-256 dos ficheiros de entrada.
-- Testes unitários com `pytest`.
-- Workflow GitHub Actions para executar testes em cada push e pull request.
-
-
-## Licença
-
-MIT — ver `LICENSE` (adicionar antes de publicar, caso queiras usar esta licença).
+O projeto constitui um percurso de aprendizagem prática, permitindo documentar decisões técnicas, testar soluções e demonstrar a evolução das competências em cibersegurança e desenvolvimento de software.
 
