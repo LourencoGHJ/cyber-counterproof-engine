@@ -1,12 +1,20 @@
+
 """CLI do Cyber Counterproof Engine."""
 from __future__ import annotations
 
 import argparse
 import sys
 
+from cce.dashboard import generate_dashboard
 from cce.drift import compare_policies
 from cce.engine import analyze
-from cce.models import InputError, load_json, validate_policy, validate_requirements
+from cce.models import (
+    InputError,
+    load_json,
+    validate_policy,
+    validate_requirements,
+)
+from cce.monitor import run_monitor
 from cce.nftables import (
     NftablesError,
     inspect_live_ruleset,
@@ -14,16 +22,6 @@ from cce.nftables import (
     write_json_report,
 )
 from cce.report import build_report, write_report, sha256_file
-
-from cce.models import InputError, load_json, validate_policy, validate_requirements
-from cce.nftables import (
-    NftablesError,
-    inspect_live_ruleset,
-    validate_rules_file,
-    write_json_report,
-)
-
-
 
 
 def make_parser():
@@ -33,11 +31,16 @@ def make_parser():
     )
     subs = parser.add_subparsers(dest="command", required=True)
 
-    audit = subs.add_parser("audit", help="Auditoria da política JSON do modelo.")
+    # Auditoria da política
+    audit = subs.add_parser(
+        "audit",
+        help="Auditoria da política JSON do modelo.",
+    )
     audit.add_argument("--policy", required=True)
     audit.add_argument("--requirements", required=True)
     audit.add_argument("--output", required=True)
 
+    # Validação de sintaxe nftables, sem aplicar regras
     check = subs.add_parser(
         "validate-nft",
         help="Validar sintaxe nftables sem aplicar regras.",
@@ -45,6 +48,7 @@ def make_parser():
     check.add_argument("--file", required=True)
     check.add_argument("--output", required=True)
 
+    # Consulta do ruleset ativo, em modo de leitura
     live = subs.add_parser(
         "inspect-live",
         help="Ler o ruleset ativo sem o modificar.",
@@ -56,7 +60,7 @@ def make_parser():
         help="Incluir ruleset completo no relatório.",
     )
 
-    # Novo comando: comparação de políticas
+    # Comparação de políticas
     compare = subs.add_parser(
         "compare-policy",
         help="Comparar política esperada com política observada.",
@@ -65,8 +69,48 @@ def make_parser():
     compare.add_argument("--observed", required=True)
     compare.add_argument("--output", required=True)
 
-    return parser
+    # Monitorização periódica
+    monitor = subs.add_parser(
+        "monitor",
+        help="Monitorizar políticas periodicamente em modo de leitura.",
+    )
+    monitor.add_argument("--expected", required=True)
+    monitor.add_argument("--observed", required=True)
+    monitor.add_argument(
+        "--history",
+        default="reports/monitor-history.json",
+        help="Caminho do histórico JSON.",
+    )
+    monitor.add_argument(
+        "--interval",
+        type=float,
+        default=60,
+        help="Intervalo entre verificações, em segundos.",
+    )
+    monitor.add_argument(
+        "--checks",
+        type=int,
+        default=None,
+        help="Número de verificações; por omissão, executa continuamente.",
+    )
 
+    # Dashboard HTML
+    dashboard = subs.add_parser(
+        "dashboard",
+        help="Gerar o dashboard HTML a partir do histórico.",
+    )
+    dashboard.add_argument(
+        "--history",
+        default="reports/monitor-history.json",
+        help="Caminho do histórico JSON.",
+    )
+    dashboard.add_argument(
+        "--output",
+        default="reports/dashboard.html",
+        help="Caminho do dashboard HTML gerado.",
+    )
+
+    return parser
 
 
 def main():
@@ -75,16 +119,23 @@ def main():
     try:
         if args.command == "audit":
             policy = load_json(args.policy)
-            reqs = load_json(args.requirements)
-            errors = validate_policy(policy) + validate_requirements(reqs)
+            requirements = load_json(args.requirements)
+            errors = (
+                validate_policy(policy)
+                + validate_requirements(requirements)
+            )
 
             if errors:
                 for error in errors:
                     print(f"ERRO DE ENTRADA: {error}", file=sys.stderr)
                 return 2
 
-            result = analyze(policy, reqs)
-            report = build_report(result, args.policy, args.requirements)
+            result = analyze(policy, requirements)
+            report = build_report(
+                result,
+                args.policy,
+                args.requirements,
+            )
             write_report(report, args.output)
 
             summary = result["summary"]
@@ -104,11 +155,47 @@ def main():
 
             return 0 if result["status"] == "PASS" else 1
 
+        if args.command == "monitor":
+
+            def show_result(result):
+                print(
+                    f"[{result['timestamp_utc']}] "
+                    f"CCE: {result['status']}"
+                )
+
+                if "summary" in result:
+                    print(
+                        "Divergências: "
+                        f"{result['summary']['findings_total']}"
+                    )
+
+                if "error" in result:
+                    print(
+                        f"ERRO: {result['error']}",
+                        file=sys.stderr,
+                    )
+
+            run_monitor(
+                expected_path=args.expected,
+                observed_path=args.observed,
+                history_path=args.history,
+                interval_seconds=args.interval,
+                max_checks=args.checks,
+                on_result=show_result,
+            )
+            return 0
+
+        if args.command == "dashboard":
+            output = generate_dashboard(
+                args.history,
+                args.output,
+            )
+            print(f"Dashboard gerado: {output}")
+            return 0
 
         if args.command == "compare-policy":
             expected = load_json(args.expected)
             observed = load_json(args.observed)
-
             result = compare_policies(expected, observed)
 
             report = {
@@ -136,11 +223,12 @@ def main():
 
             write_report(report, args.output)
 
+            summary = result["summary"]
             print(
                 f"CCE: {result['status']} | "
-                f"Regras esperadas: {result['summary']['expected_rules']} | "
-                f"Regras observadas: {result['summary']['observed_rules']} | "
-                f"Divergências: {result['summary']['findings_total']}"
+                f"Regras esperadas: {summary['expected_rules']} | "
+                f"Regras observadas: {summary['observed_rules']} | "
+                f"Divergências: {summary['findings_total']}"
             )
             print(f"Relatório: {args.output}")
 
@@ -151,7 +239,6 @@ def main():
                 )
 
             return 0 if result["status"] == "PASS" else 1
-
 
         if args.command == "validate-nft":
             result = validate_rules_file(args.file)
@@ -167,7 +254,10 @@ def main():
                 else:
                     status = "ERROR"
 
-            print(f"Validação nftables: {status}; regras aplicadas: não")
+            print(
+                f"Validação nftables: {status}; "
+                "regras aplicadas: não"
+            )
             print(f"Relatório: {args.output}")
 
             if result.get("stderr"):
@@ -193,20 +283,23 @@ def main():
                 "Ruleset consultado em modo de leitura; "
                 "nenhuma regra foi alterada."
             )
-            print(f"SHA-256: {result['sha256']} | Relatório: {args.output}")
+            print(
+                f"SHA-256: {result['sha256']} | "
+                f"Relatório: {args.output}"
+            )
             return 0
 
     except (InputError, NftablesError, OSError) as exc:
         print(f"ERRO: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
-        if args.command != "compare-policy":
+        if args.command not in {"compare-policy", "monitor", "dashboard"}:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)
         return 2
 
     return 2
 
+
 if __name__ == "__main__":
     raise SystemExit(main())
-

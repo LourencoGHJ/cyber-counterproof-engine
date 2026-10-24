@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CCE — Dashboard de Monitorização</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui, sans-serif; }
+body { margin: 0; background: #10151d; color: #e8edf4; }
+main { max-width: 1100px; margin: auto; padding: 32px 20px; }
+h1 { margin-bottom: 6px; }
+.muted { color: #9aa8ba; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 14px; margin: 24px 0; }
+.card, .panel { background: #1a2330; border: 1px solid #2b394a; border-radius: 12px; padding: 18px; }
+.label { color: #aab8c9; font-size: 14px; }
+.value { font-size: 28px; font-weight: 700; margin-top: 8px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; vertical-align: top; padding: 13px; border-bottom: 1px solid #2b394a; }
+th { color: #aab8c9; font-size: 13px; }
+.wrap { overflow-x: auto; }
+.status { display: inline-block; padding: 4px 9px; border-radius: 6px; font-weight: 700; font-size: 12px; }
+.pass { background: #123d2b; color: #82e6b0; }
+.drift { background: #512c18; color: #ffc18a; }
+.error { background: #511f2a; color: #ff9eac; }
+ul { padding-left: 18px; }
+footer { margin-top: 24px; color: #9aa8ba; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Cyber Counterproof Engine</h1>
+<p class="muted">Dashboard local de monitorização de políticas</p>
+<div class="cards">
+<div class="card"><div class="label">Último estado</div>
+<div class="value"><span class="status drift">DRIFT</span></div></div>
+<div class="card"><div class="label">Verificações</div><div class="value">6</div></div>
+<div class="card"><div class="label">PASS</div><div class="value">2</div></div>
+<div class="card"><div class="label">DRIFT</div><div class="value">4</div></div>
+<div class="card"><div class="label">ERROR</div><div class="value">0</div></div>
+</div>
+<section class="panel">
+<h2>Histórico de verificações</h2>
+<div class="wrap"><table>
+<thead><tr><th>Data/hora UTC</th><th>Estado</th><th>Divergências</th><th>Detalhes</th></tr></thead>
+<tbody><tr><td>2026-10-24T13:43:37.661321+00:00</td><td><span class='status drift'>DRIFT</span></td><td>1</td><td><ul><li><strong>CCE-DRIFT-RULE-MISMATCH</strong> — regra allow-ssh-lab (high)</li></ul></td></tr><tr><td>2026-10-24T13:43:32.657711+00:00</td><td><span class='status drift'>DRIFT</span></td><td>1</td><td><ul><li><strong>CCE-DRIFT-RULE-MISMATCH</strong> — regra allow-ssh-lab (high)</li></ul></td></tr><tr><td>2026-10-24T13:43:27.655337+00:00</td><td><span class='status drift'>DRIFT</span></td><td>1</td><td><ul><li><strong>CCE-DRIFT-RULE-MISMATCH</strong> — regra allow-ssh-lab (high)</li></ul></td></tr><tr><td>2026-10-24T13:42:58.839681+00:00</td><td><span class='status drift'>DRIFT</span></td><td>1</td><td><ul><li><strong>CCE-DRIFT-RULE-MISMATCH</strong> — regra allow-ssh-lab (high)</li></ul></td></tr><tr><td>2026-10-24T13:41:08.568295+00:00</td><td><span class='status pass'>PASS</span></td><td>0</td><td><span class='muted'>Sem divergências detalhadas.</span></td></tr><tr><td>2026-10-24T13:40:17.523347+00:00</td><td><span class='status pass'>PASS</span></td><td>0</td><td><span class='muted'>Sem divergências detalhadas.</span></td></tr></tbody>
+</table></div>
+</section>
+<footer>Dados provenientes do histórico JSON. Este dashboard não inspeciona nem altera diretamente a firewall.</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "policy_id": "cce-monitor-baseline",
+  "description": "Politica esperada para testes locais",
+  "input_policy": "drop",
+  "output_policy": "accept",
+  "rules": [
+    {
+      "id": "allow-loopback",
+      "chain": "input",
+      "action": "accept",
+      "protocol": "any",
+      "source": "127.0.0.0/8",
+      "destination_port": null,
+      "service": "loopback"
+    },
+    {
+      "id": "allow-ssh-lab",
+      "chain": "input",
+      "action": "accept",
+      "protocol": "tcp",
+      "source": "192.0.2.10/32",
+      "destination_port": 22,
+      "service": "ssh"
+    }
+  ]
+}
