@@ -45,16 +45,29 @@ def validate_rules_file(path, timeout=15):
         or "must be root" in stderr
     )
 
+    syntax_error = any(
+        marker in stderr.lower()
+        for marker in (
+            "syntax error",
+            "unexpected token",
+            "unexpected string",
+            "unexpected newline",
+            "could not parse",
+        )
+    )
+
     if p.returncode == 0:
         status = "PASS"
         valid = True
     elif permission_error:
         status = "ERROR"
         valid = None
-    else:
+    elif syntax_error:
         status = "FAIL"
         valid = False
-
+    else:
+        status = "ERROR"
+        valid = None
     return {
         "operation": "validate_file",
         "status": status,
