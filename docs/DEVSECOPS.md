@@ -69,7 +69,7 @@ Adding workflows does not enable branch protection automatically. Review the exa
 
 - A clean scan does not prove that a project has no vulnerabilities; it only means the configured tools did not report issues in the areas they examined.
 - CCE traffic evaluation is a simplified model and is not a substitute for controlled integration testing.
-- Checkov is run explicitly against the main Terraform configuration and the secure Terraform example. The intentionally insecure example is retained for learning and is not included in the quality gate.
+- The standalone secure Terraform fixture has a documented inline exception for Checkov control CKV2_AWS_5 because the snippet intentionally does not attach the security group to a workload. Other checks remain enabled. The intentionally insecure fixture is retained for learning and is not included in the quality gate.
 - The workflows use major-version references for GitHub Actions. Keep these references current and review Dependabot proposals before merging.
 - Never add real credentials to examples. If a valid secret is detected, revoke or rotate it first, then clean the history if required.
 - Container-image scanning, publishing container artefacts, and isolated VM integration tests remain possible future phases.

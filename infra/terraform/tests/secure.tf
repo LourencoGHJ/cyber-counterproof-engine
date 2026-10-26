@@ -1,3 +1,4 @@
+#checkov:skip=CKV2_AWS_5: Standalone lab fixture; attachment is intentionally outside this snippet.
 resource "aws_security_group" "secure_example" {
   name        = "cce-secure-example"
   description = "Security group with restricted SSH access"
