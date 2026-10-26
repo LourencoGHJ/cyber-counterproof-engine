@@ -1,4 +1,4 @@
-﻿resource "aws_security_group" "secure_example" {
+resource "aws_security_group" "secure_example" {
   name        = "cce-secure-example"
   description = "Security group with restricted SSH access"
   vpc_id      = "vpc-12345678"

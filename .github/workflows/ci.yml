@@ -1,58 +1,80 @@
-name: CCE CI
+name: CCE DevSecOps CI
+
 on:
   push:
+    branches: [main, "feat/**"]
   pull_request:
+    branches: [main]
   workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: cce-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  tests:
+  python-quality-gates:
+    name: Testes e segurança Python
     runs-on: ubuntu-latest
     steps:
       - name: Obter código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Instalar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Instalar projeto e dependências de teste
         run: python -m pip install -e ".[dev]"
-	      - name: Instalar Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.16.6"
-          terraform_wrapper: false
-      - name: Validar configuração Terraform
-        working-directory: infra/terraform
-        run: |
-          terraform fmt -check
-          terraform init -backend=false
-          terraform validate
-      - name: Analisar segurança IaC com Checkov
-        run: |
-          python -m pip install checkov
-          checkov -f infra/terraform/main.tf --framework terraform --compact
-      - name: Executar testes
+      - name: Executar testes automatizados
         run: python -m pytest -v
-      - name: Analisar segurança do código Python
+      - name: Analisar segurança do código Python (Bandit / SAST)
         run: |
           python -m pip install bandit
           bandit -r src/cce -ll
-      - name: Auditar dependências
+      - name: Auditar dependências Python (pip-audit / SCA)
         run: |
           python -m pip install pip-audit
           pip-audit --skip-editable
       - name: Executar auditoria da política de exemplo
-        run: |
-          python -m cce.cli audit \
-            --policy config/policy.json \
-            --requirements config/requirements.json \
-            --output reports/ci-report.json
-      - name: Carregar relatório como artefacto
+        run: python -m cce.cli audit --policy config/policy.json --requirements config/requirements.json --output reports/ci-report.json
+      - name: Guardar relatório de auditoria
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cce-audit-report
           path: reports/ci-report.json
           if-no-files-found: ignore
+
+  terraform-quality-gates:
+    name: Validação Terraform e segurança IaC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.14.6"
+          terraform_wrapper: false
+      - name: Verificar formatação Terraform
+        run: terraform fmt -check -recursive infra/terraform
+      - name: Inicializar Terraform sem backend
+        working-directory: infra/terraform
+        run: terraform init -backend=false
+      - name: Validar configuração Terraform
+        working-directory: infra/terraform
+        run: terraform validate
+      - name: Instalar Checkov
+        run: python -m pip install checkov
+      - name: Analisar configuração Terraform principal
+        run: checkov -f infra/terraform/main.tf --framework terraform --compact
+      - name: Analisar exemplo Terraform seguro
+        run: checkov -f infra/terraform/tests/secure.tf --framework terraform --compact

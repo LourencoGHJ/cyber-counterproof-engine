@@ -1,4 +1,4 @@
-﻿resource "aws_security_group" "insecure_example" {
+resource "aws_security_group" "insecure_example" {
   name        = "cce-insecure-example"
   description = "Intentionally insecure example for Checkov testing"
   vpc_id      = "vpc-12345678"
