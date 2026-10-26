@@ -5,3 +5,15 @@ __pycache__/
 *.egg-info/
 reports/*.json
 !reports/.gitkeep
+
+# Terraform local state and generated files
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
