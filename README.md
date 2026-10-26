@@ -3,6 +3,7 @@
 [![CI](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/codeql.yml)
 [![Secret Scanning](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/secrets.yml/badge.svg)](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/secrets.yml)
+[![Container Security](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/container-security.yml/badge.svg)](https://github.com/LourencoGHJ/cyber-counterproof-engine/actions/workflows/container-security.yml)
 
 The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project built with Python. It analyses declarative firewall policies, identifies risky configurations, compares expected and observed policies, and produces reproducible reports. It is also a practical learning environment for **Security Engineering** and **DevSecOps**.
 
@@ -17,10 +18,11 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Reproducible evidence:** generates JSON reports and SHA-256 hashes for input files.
 - **nftables integration:** validates rules files with nft --check and can inspect the active ruleset in read-only mode.
 - **Local dashboard:** presents an HTML summary of monitoring history.
+- **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
 
 ## DevSecOps in the development lifecycle
 
-The repository defines automated security checks in GitHub Actions. The workflows are configured to run on code changes and, where applicable, on a schedule.
+The repository defines automated security checks in GitHub Actions. The workflows run on code changes and, where applicable, on a schedule.
 
 | Practice | Tool | Purpose |
 |---|---|---|
@@ -30,19 +32,18 @@ The repository defines automated security checks in GitHub Actions. The workflow
 | SCA | pip-audit | Check Python dependencies for known vulnerabilities |
 | Secret scanning | Gitleaks | Search for potential secrets in Git history |
 | IaC security | Terraform + Checkov | Validate Terraform configuration and check selected security controls |
+| Container security | Docker + Trivy | Build the image and check OS/library vulnerabilities rated HIGH or CRITICAL |
 | Dependency management | Dependabot | Propose updates for Python packages, GitHub Actions, and Terraform |
 
-The configured CI checks can act as **quality gates** by failing when a check does not pass. To block merges, enable branch protection for main in the GitHub repository settings and require the relevant status checks. See [docs/DEVSECOPS.md](docs/DEVSECOPS.md) for local commands, control limitations, and recommended setup.
+The configured CI checks can act as **quality gates** by failing when a check does not pass. To block merges, enable a branch ruleset for main in GitHub settings and require the relevant status checks. See [docs/DEVSECOPS.md](docs/DEVSECOPS.md) for local commands, control limitations, and recommended setup.
 
 ## Local installation
 
-Requirements: Python 3.11 or later. The nftables utility is also required for the firewall validation and inspection commands.
+Requirements: Python 3.11 or later. The nft utility is also required for the firewall validation and inspection commands.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
-```
+    python -m venv .venv
+    source .venv/bin/activate
+    python -m pip install -e ".[dev]"
 
 On Windows, activate the environment with **.venv\Scripts\Activate.ps1**.
 
@@ -50,35 +51,34 @@ On Windows, activate the environment with **.venv\Scripts\Activate.ps1**.
 
 Audit the example policy:
 
-```bash
-cce audit --policy config/policy.json --requirements config/requirements.json --output reports/audit.json
-```
+    cce audit --policy config/policy.json --requirements config/requirements.json --output reports/audit.json
 
 Compare expected and observed policies:
 
-```bash
-cce compare-policy --expected config/monitor-expected.json --observed config/monitor-observed.json --output reports/comparison.json
-```
+    cce compare-policy --expected config/monitor-expected.json --observed config/monitor-observed.json --output reports/comparison.json
 
 Validate an nftables file without applying rules:
 
-```bash
-cce validate-nft --file examples/cce-test.nft --output reports/nft-validation.json
-```
+    cce validate-nft --file examples/cce-test.nft --output reports/nft-validation.json
 
 Inspect the active ruleset in read-only mode:
 
-```bash
-cce inspect-live --output reports/live-summary.json
-```
+    cce inspect-live --output reports/live-summary.json
 
 Generate a local dashboard from monitoring history:
 
-```bash
-cce dashboard --history reports/monitor-history.json --output reports/dashboard.html
-```
+    cce dashboard --history reports/monitor-history.json --output reports/dashboard.html
 
-The same commands can be run with **python -m cce.cli** after the project is installed in the environment.
+## Build and smoke-test the Docker image
+
+Build the image locally and confirm that the CLI starts:
+
+    docker build --pull -t cce:local .
+    docker run --rm cce:local --help
+
+The image runs as UID 10001 rather than root. To run an audit, mount input files read-only and provide a writable output directory. Run the container with least privilege and only mount files needed for the task. Image vulnerability scanning runs in the container-security workflow; the workflow does not publish the image to a registry.
+
+The same commands can be run with **python -m cce.cli** after the project is installed in a Python environment.
 
 ## Security scope and limitations
 
@@ -86,6 +86,8 @@ The same commands can be run with **python -m cce.cli** after the project is ins
 - Live ruleset inspection is read-only.
 - Traffic evaluation represents only the simplified model implemented by CCE.
 - SHA-256 hashes identify files; they are not digital signatures and do not prove report authenticity.
+- The Docker workflow builds and scans a local CI image only; it does not sign or publish releases.
+- Trivy fails the image scan for detected HIGH/CRITICAL OS or library vulnerabilities when a fix is available. Scanning does not prove the image is free of vulnerabilities.
 - Run infrastructure and network tests only in authorised, isolated environments.
 
 ## Career Path & Professional Relevance
@@ -118,17 +120,17 @@ The DevSecOps track integrates security into the development lifecycle rather th
 - **SCA:** Dependency auditing with pip-audit.
 - **Secret scanning:** Gitleaks checks for potential secrets in Git history.
 - **Infrastructure as Code security:** Terraform validation and Checkov analysis.
+- **Container security:** Docker image build, non-root execution, and Trivy vulnerability scanning.
 - **Dependency management:** Dependabot update proposals.
 - **Quality gates:** checks that return a failure result when configured controls do not pass.
 
-Mandatory branch protection, container-image scanning, and secure container publishing still require additional configuration or development. They are not represented as completed in this phase.
+Mandatory branch protection, image signing, and secure container publishing still require additional configuration or development. They are not represented as completed in this phase.
 
 ### Development Goals
 
-1. Run and verify every workflow in GitHub Actions.
-2. Configure branch protection so relevant checks are required before merging.
-3. Review findings and document the handling of false positives from SAST, SCA, and secret scanning.
-4. Consider reproducible container builds and image scanning if Docker distribution becomes necessary.
-5. Expand test coverage, especially for malformed input and failure handling.
+1. Configure branch protection so relevant checks are required before merging.
+2. Review findings and document the handling of false positives from SAST, SCA, secret scanning, and image scanning.
+3. Consider image signing and registry publishing if the project is distributed as a container.
+4. Expand test coverage, especially for malformed input and failure handling.
 
 CCE is a practical learning project intended to demonstrate **Security Engineering** and **DevSecOps** skills, with explicit documentation of each control's scope and limitations.
