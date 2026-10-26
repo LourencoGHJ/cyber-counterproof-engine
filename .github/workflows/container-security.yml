@@ -1,0 +1,55 @@
+name: CCE Container Security
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "43 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cce-container-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image-security:
+    name: Scan da imagem Docker (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Construir imagem local para verificação
+        run: docker build --pull --tag cce:ci .
+
+      - name: Teste de arranque da CLI
+        run: docker run --rm cce:ci --help
+
+      - name: Analisar vulnerabilidades da imagem com Trivy
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: image
+          image-ref: cce:ci
+          format: json
+          output: trivy-image-report.json
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          scanners: vuln
+
+      - name: Guardar relatório Trivy
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cce-trivy-image-report
+          path: trivy-image-report.json
+          if-no-files-found: ignore
+          retention-days: 30
