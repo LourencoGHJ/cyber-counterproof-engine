@@ -37,6 +37,13 @@ def make_snapshot(input_policy="drop", output_policy="accept"):
                 }
             },
             {
+                "chain": {
+                    "family": "ip",
+                    "table": "filter",
+                    "name": "ufw-before-input",
+                }
+            },
+            {
                 "rule": {
                     "family": "ip",
                     "table": "filter",
