@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from cce.dashboard import generate_dashboard
 from cce.drift import compare_policies
 from cce.engine import analyze
 from cce.live import analyze_live_ruleset
+from cce.iptables_save import analyze_iptables_saves
 from cce.models import (
     InputError,
     load_json,
@@ -53,6 +55,15 @@ def make_parser():
         action="store_true",
         help="Incluir ruleset completo no relatório.",
     )
+
+    compare_iptables = subs.add_parser(
+        "compare-iptables-save",
+        help="Comparar políticas base com snapshots iptables-save.",
+    )
+    compare_iptables.add_argument("--policy", required=True)
+    compare_iptables.add_argument("--ipv4", required=True)
+    compare_iptables.add_argument("--ipv6", required=True)
+    compare_iptables.add_argument("--output", required=True)
 
     compare_live = subs.add_parser(
         "compare-live",
@@ -240,6 +251,69 @@ def main():
 
             return 0 if result["status"] == "PASS" else 1
 
+        if args.command == "compare-iptables-save":
+            policy = load_json(args.policy)
+            errors = validate_policy(policy)
+
+            if errors:
+                for error in errors:
+                    print(f"ERRO DE ENTRADA: {error}", file=sys.stderr)
+                return 2
+
+            ipv4_text = Path(args.ipv4).read_text(encoding="utf-8")
+            ipv6_text = Path(args.ipv6).read_text(encoding="utf-8")
+
+            result = analyze_iptables_saves(
+                policy,
+                ipv4_text,
+                ipv6_text,
+            )
+
+            report = {
+                "schema_version": "1.0",
+                "engine": {
+                    "name": "Cyber Counterproof Engine",
+                    "version": "0.1.0",
+                },
+                "input_evidence": {
+                    "policy": {
+                        "path": args.policy,
+                        "sha256": sha256_file(args.policy),
+                    },
+                    "ipv4_snapshot": {
+                        "path": args.ipv4,
+                        "sha256": sha256_file(args.ipv4),
+                    },
+                    "ipv6_snapshot": {
+                        "path": args.ipv6,
+                        "sha256": sha256_file(args.ipv6),
+                    },
+                },
+                "result": result,
+                "integrity_note": (
+                    "Os hashes identificam os ficheiros de entrada; "
+                    "não constituem uma assinatura digital."
+                ),
+            }
+
+            write_json_report(report, args.output)
+            summary = result["summary"]
+
+            print(
+                f"CCE: {result['status']} | "
+                f"Chains: {summary['chains_total']} | "
+                f"Regras: {summary['rules_total']} | "
+                f"Políticas coincidentes: "
+                f"{summary['base_policies_matched']} | "
+                f"Divergências: "
+                f"{summary['base_policy_mismatches']}"
+            )
+            print(f"Relatório: {args.output}")
+
+            if result["status"] == "DRIFT":
+                return 1
+            return 3
+
         if args.command == "compare-live":
             policy = load_json(args.policy)
             errors = validate_policy(policy)
@@ -343,7 +417,7 @@ def main():
         return 2
     except ValueError as exc:
         if args.command not in {
-            "compare-policy", "compare-live", "monitor", "dashboard"
+            "compare-policy", "compare-live", "compare-iptables-save", "monitor", "dashboard"
         }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)
