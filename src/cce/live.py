@@ -6,6 +6,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
+from cce.chain_graph import analyze_chain_graph
+
 
 HOOK_FIELDS = {
     "input": "input_policy",
@@ -165,6 +167,8 @@ def analyze_live_ruleset(
     missing_hooks = sorted(set(expected_policies) - observed_hooks)
     unassessed_hooks = sorted(set(HOOK_FIELDS) - set(expected_policies))
 
+    chain_graph = analyze_chain_graph(snapshot)
+
     matched_count = sum(
         entry["policy_match"] is True for entry in base_chains
     )
@@ -173,7 +177,12 @@ def analyze_live_ruleset(
     )
 
     # Mesmo sem divergências, as regras individuais não foram interpretadas.
-    status = "DRIFT" if findings else "INCONCLUSIVE"
+    structural_dangling = chain_graph["summary"]["dangling_targets"]
+    status = (
+        "DRIFT"
+        if findings or structural_dangling
+        else "INCONCLUSIVE"
+    )
 
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -188,15 +197,20 @@ def analyze_live_ruleset(
             "rules_semantically_compared": 0,
             "missing_hooks": missing_hooks,
             "unassessed_hooks": unassessed_hooks,
+            "structural_dangling_targets": structural_dangling,
+            "chains_without_explicit_path": chain_graph["summary"]["chains_without_explicit_path"],
+            "rules_with_xt": chain_graph["summary"]["rules_with_xt"],
         },
         "base_chains": base_chains,
         "findings": findings,
+        "chain_graph": chain_graph,
         "expression_kinds": dict(sorted(expression_kinds.items())),
         "limitations": [
             "A análise compara apenas políticas por omissão das base chains.",
             "As regras individuais e a sua ordem não são comparadas.",
             "Não é avaliada a semântica completa dos saltos entre chains.",
             "Expressões de compatibilidade xt não são interpretadas.",
+            "A acessibilidade considera apenas referências explícitas jump/goto.",
             "Hooks sem política declarada ficam por avaliar.",
             "INCONCLUSIVE não significa que a firewall seja segura ou insegura.",
             "O snapshot pode estar desatualizado relativamente ao estado atual.",
