@@ -7,6 +7,7 @@ import sys
 from cce.dashboard import generate_dashboard
 from cce.drift import compare_policies
 from cce.engine import analyze
+from cce.live import analyze_live_ruleset
 from cce.models import (
     InputError,
     load_json,
@@ -52,6 +53,14 @@ def make_parser():
         action="store_true",
         help="Incluir ruleset completo no relatório.",
     )
+
+    compare_live = subs.add_parser(
+        "compare-live",
+        help="Comparar políticas base com um snapshot nftables (análise parcial).",
+    )
+    compare_live.add_argument("--policy", required=True)
+    compare_live.add_argument("--ruleset", required=True)
+    compare_live.add_argument("--output", required=True)
 
     compare = subs.add_parser(
         "compare-policy",
@@ -231,6 +240,58 @@ def main():
 
             return 0 if result["status"] == "PASS" else 1
 
+        if args.command == "compare-live":
+            policy = load_json(args.policy)
+            errors = validate_policy(policy)
+
+            if errors:
+                for error in errors:
+                    print(f"ERRO DE ENTRADA: {error}", file=sys.stderr)
+                return 2
+
+            snapshot = load_json(args.ruleset)
+            result = analyze_live_ruleset(policy, snapshot)
+
+            report = {
+                "schema_version": "1.0",
+                "engine": {
+                    "name": "Cyber Counterproof Engine",
+                    "version": "0.1.0",
+                },
+                "input_evidence": {
+                    "policy": {
+                        "path": args.policy,
+                        "sha256": sha256_file(args.policy),
+                    },
+                    "ruleset_snapshot": {
+                        "path": args.ruleset,
+                        "sha256": sha256_file(args.ruleset),
+                    },
+                },
+                "result": result,
+                "integrity_note": (
+                    "Os hashes identificam os ficheiros de entrada; "
+                    "não constituem uma assinatura digital."
+                ),
+            }
+
+            write_json_report(report, args.output)
+            summary = result["summary"]
+
+            print(
+                f"CCE: {result['status']} | "
+                f"Base chains: {summary['base_chains']} | "
+                f"Divergências de política: "
+                f"{summary['base_policy_mismatches']}"
+            )
+            print(f"Relatório: {args.output}")
+
+            if result["status"] == "DRIFT":
+                return 1
+            if result["status"] == "INCONCLUSIVE":
+                return 3
+            return 0
+
         if args.command == "validate-nft":
             result = validate_rules_file(args.file)
             write_json_report(result, args.output)
@@ -281,7 +342,9 @@ def main():
         print(f"ERRO: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
-        if args.command not in {"compare-policy", "monitor", "dashboard"}:
+        if args.command not in {
+            "compare-policy", "compare-live", "monitor", "dashboard"
+        }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)
         return 2

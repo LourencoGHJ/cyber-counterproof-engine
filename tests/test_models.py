@@ -96,3 +96,22 @@ def test_requirements_validator_rejects_invalid_severity():
     )
 
     assert any("severity" in error for error in errors)
+
+
+def test_forward_policy_accepts_only_accept_or_drop():
+    from cce.models import validate_policy
+
+    policy = {
+        "policy_id": "forward-test",
+        "input_policy": "drop",
+        "output_policy": "accept",
+        "forward_policy": "drop",
+        "rules": [],
+    }
+    assert validate_policy(policy) == []
+
+    policy["forward_policy"] = "reject"
+    assert any(
+        "forward_policy" in error
+        for error in validate_policy(policy)
+    )

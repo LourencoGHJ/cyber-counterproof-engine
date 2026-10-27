@@ -3,6 +3,7 @@
   "description": "Política de exemplo para testes locais; não aplicada ao sistema.",
   "input_policy": "drop",
   "output_policy": "accept",
+  "forward_policy": "drop",
   "rules": [
     {
       "id": "allow-loopback",

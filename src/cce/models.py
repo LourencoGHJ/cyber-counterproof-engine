@@ -58,6 +58,11 @@ def validate_policy(policy: dict[str, Any]) -> list[str]:
         if not isinstance(value, str) or value not in VALID_ACTIONS:
             errors.append(f"{field} tem de ser um de {sorted(VALID_ACTIONS)}.")
 
+    if "forward_policy" in policy:
+        value = policy["forward_policy"]
+        if not isinstance(value, str) or value not in {"accept", "drop"}:
+            errors.append("forward_policy tem de ser 'accept' ou 'drop'.")
+
     rules = policy.get("rules")
     if not isinstance(rules, list):
         errors.append("rules tem de ser uma lista.")
