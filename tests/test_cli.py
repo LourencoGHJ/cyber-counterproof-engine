@@ -94,6 +94,59 @@ def test_compare_policy_rejects_invalid_action_field(tmp_path, monkeypatch, caps
     assert not output.exists()
 
 
+
+
+def test_compare_iptables_save_reports_ssh_candidate(
+    tmp_path, monkeypatch, capsys
+):
+    policy_file = tmp_path / "policy.json"
+    ipv4_file = tmp_path / "rules-v4.save"
+    ipv6_file = tmp_path / "rules-v6.save"
+    output_file = tmp_path / "report.json"
+
+    write_json(policy_file, valid_policy())
+
+    safe_snapshot = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        "COMMIT\n"
+    )
+    ipv4_snapshot = safe_snapshot.replace(
+        "COMMIT\n",
+        "-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT\nCOMMIT\n",
+        1,
+    )
+
+    ipv4_file.write_text(ipv4_snapshot, encoding="utf-8")
+    ipv6_file.write_text(safe_snapshot, encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cce",
+            "compare-iptables-save",
+            "--policy", str(policy_file),
+            "--ipv4", str(ipv4_file),
+            "--ipv6", str(ipv6_file),
+            "--output", str(output_file),
+        ],
+    )
+
+    # A análise estrutural continua inconclusiva; o candidato SSH é
+    # acrescentado ao relatório sem alterar artificialmente o estado global.
+    assert main() == 3
+
+    output = capsys.readouterr().out
+    assert "CCE: INCONCLUSIVE" in output
+    assert "Riscos candidatos: 1" in output
+    assert "possível SSH/TCP/22" in output
+
+    report = json.loads(output_file.read_text(encoding="utf-8"))
+    assert report["result"]["summary"]["rule_risk_candidates"] == 1
+    assert report["result"]["rule_risk_candidates"][0]["family"] == "ipv4"
+
 def test_compare_iptables_save_creates_inconclusive_report(
     tmp_path, monkeypatch, capsys
 ):
