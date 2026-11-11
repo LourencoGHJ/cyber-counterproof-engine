@@ -1,0 +1,11 @@
+{
+  "source_ip": "203.0.113.45",
+  "destination_ip": "198.51.100.20",
+  "protocol": "tcp",
+  "source_port": 51515,
+  "destination_port": 443,
+  "input_interface": "eth0",
+  "connection_state": "ESTABLISHED",
+  "tcp_flags": ["SYN", "ACK"],
+  "is_non_initial_fragment": false
+}
