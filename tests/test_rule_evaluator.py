@@ -484,3 +484,17 @@ def test_none_none_tcp_flag_mask_does_not_require_flag_metadata():
     )
 
     assert result.status == "ACCEPT"
+
+
+
+def test_non_tcp_packet_with_malformed_tcp_flag_rule_is_inconclusive():
+    result = evaluate(
+        make_snapshot(
+            "-A INPUT -p udp --tcp-flags SYN,ACK SYN -j ACCEPT\n"
+        ),
+        packet(protocol="udp", source_port=None, destination_port=None,
+               tcp_flags=None),
+    )
+
+    assert result.status == "INCONCLUSIVE"
+    assert result.trace[0].result == "inconclusive"
