@@ -1,0 +1,8 @@
+# Synthetic example: the broad TCP DROP shadows the HTTPS ACCEPT rule.
+*filter
+:INPUT DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:FORWARD DROP [0:0]
+-A INPUT -p tcp -j DROP
+-A INPUT -p tcp --dport 443 -j ACCEPT
+COMMIT

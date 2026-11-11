@@ -10,7 +10,10 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
-RUN python -m pip install --no-cache-dir . \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir . \
     && groupadd --system --gid 10001 cce \
     && useradd --system --uid 10001 --gid cce \
         --home-dir /nonexistent --shell /usr/sbin/nologin cce \

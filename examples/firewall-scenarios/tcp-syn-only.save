@@ -1,0 +1,7 @@
+# Synthetic scenario: only an initial SYN packet is allowed.
+*filter
+:INPUT DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:FORWARD DROP [0:0]
+-A INPUT -p tcp --tcp-flags SYN,ACK,FIN,RST SYN -j ACCEPT
+COMMIT

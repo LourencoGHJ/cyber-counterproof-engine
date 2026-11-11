@@ -226,7 +226,7 @@ def test_document_reports_complete_and_partial_counts():
 
     document = build_iptables_ir_document(text, "ipv4")
 
-    assert document["schema_version"] == "1.0"
+    assert document["schema_version"] == "1.1"
     assert document["summary"] == {
         "rules_total": 2,
         "rules_fully_interpreted": 1,
@@ -320,3 +320,125 @@ def test_json_document_does_not_include_original_snapshot_line():
 
     assert "do-not-disclose" not in rendered
     assert "-A INPUT" not in rendered
+
+
+
+def test_normalizes_tcp_flags_mask_and_comparison():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN,ACK,FIN,RST SYN -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask == ("FIN", "SYN", "RST", "ACK")
+    assert rule.tcp_flags_comp == ("SYN",)
+    assert "--tcp-flags" not in rule.unsupported_options
+    assert rule.interpretation == "complete"
+
+
+def test_expands_all_and_none_tcp_flag_aliases():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags ALL NONE -j DROP"
+    )
+
+    assert rule.tcp_flags_mask == (
+        "FIN", "SYN", "RST", "PSH", "ACK", "URG"
+    )
+    assert rule.tcp_flags_comp == ()
+    assert rule.interpretation == "complete"
+
+
+def test_supports_none_as_tcp_flag_mask():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags NONE NONE -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask == ()
+    assert rule.tcp_flags_comp == ()
+    assert rule.interpretation == "complete"
+
+
+def test_tcp_flag_comparison_must_be_subset_of_mask():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN ACK -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask is None
+    assert "--tcp-flags" in rule.unsupported_options
+    assert "invalid_tcp_flags_specification" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_unknown_tcp_flag_name_is_not_interpreted():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN,FOO SYN -j ACCEPT"
+    )
+
+    assert "--tcp-flags" in rule.unsupported_options
+    assert "invalid_tcp_flags_specification" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_tcp_flags_selector_without_tcp_protocol_is_partial():
+    rule = first_rule(
+        "-A INPUT -p udp --tcp-flags SYN,ACK SYN -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask == ("SYN", "ACK")
+    assert rule.tcp_flags_comp == ("SYN",)
+    assert "tcp_flags_without_tcp_protocol" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_negated_tcp_flags_selector_is_preserved():
+    rule = first_rule(
+        "-A INPUT -p tcp ! --tcp-flags SYN,ACK SYN -j DROP"
+    )
+
+    assert rule.tcp_flags_mask == ("SYN", "ACK")
+    assert rule.tcp_flags_comp == ("SYN",)
+    assert "tcp_flags" in rule.negated_conditions
+    assert rule.interpretation == "complete"
+
+
+def test_ir_json_serializes_tcp_flag_fields_as_lists():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN,ACK SYN -j ACCEPT"
+    )
+
+    document = rule.to_dict()
+    assert document["tcp_flags_mask"] == ["SYN", "ACK"]
+    assert document["tcp_flags_comp"] == ["SYN"]
+
+
+
+def test_supports_inline_tcp_flags_mask_value():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags=SYN,ACK SYN -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask == ("SYN", "ACK")
+    assert rule.tcp_flags_comp == ("SYN",)
+    assert rule.interpretation == "complete"
+
+
+def test_missing_tcp_flags_comparison_is_partial_and_preserves_target():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN -j DROP"
+    )
+
+    assert rule.tcp_flags_mask is None
+    assert rule.target == "DROP"
+    assert "--tcp-flags" in rule.unsupported_options
+    assert "missing_value:--tcp-flags" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_multiple_tcp_flags_selectors_are_not_silently_combined():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN,ACK SYN "
+        "--tcp-flags FIN,ACK FIN -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask == ("SYN", "ACK")
+    assert "--tcp-flags" in rule.unsupported_options
+    assert "multiple_tcp_flags_selectors" in rule.warnings
+    assert rule.interpretation == "partial"
