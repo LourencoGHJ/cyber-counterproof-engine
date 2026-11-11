@@ -222,8 +222,6 @@ def _rules_are_disjoint(left: RuleIR, right: RuleIR) -> bool:
             left_value is not None
             and right_value is not None
             and left_value != right_value
-            and (field not in left.negated_conditions or field == "tcp_syn_only")
-            and (field not in right.negated_conditions or field == "tcp_syn_only")
         ):
             return True
 
