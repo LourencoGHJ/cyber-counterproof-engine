@@ -98,12 +98,9 @@ def _interface_covers(covering: str, covered: str) -> bool:
 
 
 def _effective_boolean(rule: RuleIR, field: str) -> bool | None:
-    value = getattr(rule, field)
-    if value is None:
-        return None
-    if field in rule.negated_conditions:
-        return not value
-    return value
+    # The IR stores the effective value for fragment_only and tcp_syn_only;
+    # negated_conditions is retained as metadata and must not invert it again.
+    return getattr(rule, field)
 
 
 def _matches_tcp_flags(rule: RuleIR, flags: frozenset[str]) -> bool:
