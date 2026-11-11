@@ -45,7 +45,7 @@ Requirements: Python 3.11 or later. The nft utility is also required for the fir
     source .venv/bin/activate
     python -m pip install -e ".[dev]"
 
-On Windows, activate the environment with **.venv\Scripts\Activate.ps1**.
+On Windows PowerShell, activate the environment with **.venv\Scripts\Activate.ps1**. In Windows CMD, use **.venv\Scripts\activate.bat**. After activation, the `cce` command is available. Without activation, invoke **.venv\Scripts\cce.exe** directly (for example, `.venv\Scripts\cce.exe --help`).
 
 ## Usage examples
 
@@ -68,6 +68,12 @@ Inspect the active ruleset in read-only mode:
 Generate a local dashboard from monitoring history:
 
     cce dashboard --history reports/monitor-history.json --output reports/dashboard.html
+
+Evaluate a synthetic packet against an offline iptables-save snapshot (read-only):
+
+    cce evaluate-packet --snapshot examples/firewall-test.save --family ipv4 --hook INPUT --packet examples/packets/https-request.json --output reports/evaluation.json
+
+The example snapshot and packet are synthetic. A conclusive `ACCEPT`, `DROP`, or `REJECT` evaluation exits with code 0; an `INCONCLUSIVE` result exits with code 3. Invalid input exits with code 2. Packet IP addresses and values are omitted from the JSON report; input-file SHA-256 hashes are retained as evidence identifiers.
 
 ## Build and smoke-test the Docker image
 
