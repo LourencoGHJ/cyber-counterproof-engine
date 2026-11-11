@@ -208,3 +208,13 @@ def test_counts_user_chain_transfers_as_non_terminal_rules_skipped():
     assert result["summary"]["terminal_rules_analyzed"] == 0
     assert result["summary"]["non_terminal_rules_skipped"] == 1
     assert result["findings"] == []
+
+
+
+def test_negated_fragment_selector_is_disjoint_from_fragment_only_rule():
+    result = analyze(
+        "-A INPUT -f -p tcp -j DROP\n"
+        "-A INPUT ! -f -p tcp -j ACCEPT\n"
+    )
+
+    assert result["findings"] == []
