@@ -421,13 +421,89 @@ def analyze_iptables_saves(
         result["summary"]["malformed_lines"] for result in families
     )
 
-    # Sem regras interpretadas semanticamente, nunca declaramos PASS.
+    # A IR normaliza campos conhecidos, mas não decide ainda o resultado
+    # efetivo do tráfego nem compara as regras com a política esperada.
+    from cce.iptables_ir import parse_iptables_rules_ir
+
+    ir_family_summaries: list[dict[str, Any]] = []
+    ir_fully_interpreted = 0
+    ir_partially_interpreted = 0
+    ir_unparsed = 0
+
+    for family_name, snapshot_text, structural in zip(
+        ("ipv4", "ipv6"),
+        (ipv4_text, ipv6_text),
+        families,
+    ):
+        family_rule_total = structural["summary"]["rules_total"]
+
+        try:
+            normalized_rules = parse_iptables_rules_ir(
+                snapshot_text,
+                family_name,
+            )
+        except ValueError:
+            # Não publicar uma IR incompleta como se fosse fiável.
+            family_summary = {
+                "family": family_name,
+                "rules_total": family_rule_total,
+                "rules_fully_interpreted": 0,
+                "rules_partially_interpreted": 0,
+                "rules_unparsed": family_rule_total,
+                "unsupported_modules_total": 0,
+                "unsupported_options_total": 0,
+                "unsupported_targets_total": 0,
+                "warnings_total": 0,
+                "normalization_status": "unavailable",
+            }
+        else:
+            fully = sum(
+                rule.interpretation == "complete"
+                for rule in normalized_rules
+            )
+            partially = len(normalized_rules) - fully
+
+            family_summary = {
+                "family": family_name,
+                "rules_total": len(normalized_rules),
+                "rules_fully_interpreted": fully,
+                "rules_partially_interpreted": partially,
+                "rules_unparsed": 0,
+                "unsupported_modules_total": sum(
+                    len(rule.unsupported_modules)
+                    for rule in normalized_rules
+                ),
+                "unsupported_options_total": sum(
+                    len(rule.unsupported_options)
+                    for rule in normalized_rules
+                ),
+                "unsupported_targets_total": sum(
+                    len(rule.unsupported_targets)
+                    for rule in normalized_rules
+                ),
+                "warnings_total": sum(
+                    len(rule.warnings)
+                    for rule in normalized_rules
+                ),
+                "normalization_status": (
+                    "normalized_with_partial_rules"
+                    if partially
+                    else "normalized"
+                ),
+            }
+
+        ir_family_summaries.append(family_summary)
+        ir_fully_interpreted += family_summary["rules_fully_interpreted"]
+        ir_partially_interpreted += family_summary["rules_partially_interpreted"]
+        ir_unparsed += family_summary["rules_unparsed"]
+
+    # Sem regras comparadas semanticamente com a política, nunca declaramos PASS.
     status = "DRIFT" if findings else "INCONCLUSIVE"
 
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
-        "scope": "base_policies_and_iptables_save_structure",
+        "scope": "base_policies_structure_and_rule_ir_inventory",
         "summary": {
             "families_total": len(families),
             "chains_total": total_chains,
@@ -439,11 +515,23 @@ def analyze_iptables_saves(
             "chains_without_explicit_path": chains_without_path,
             "malformed_lines": malformed,
             "rules_semantically_compared": 0,
+            "rules_ir_normalized": (
+                ir_fully_interpreted + ir_partially_interpreted
+            ),
+            "rules_ir_fully_interpreted": ir_fully_interpreted,
+            "rules_ir_partially_interpreted": ir_partially_interpreted,
+            "rules_ir_unparsed": ir_unparsed,
         },
         "findings": findings,
+        "rule_ir": {
+            "schema_version": "1.0",
+            "families": ir_family_summaries,
+        },
         "families": families,
         "limitations": [
             "A comparação de políticas abrange apenas INPUT, OUTPUT e FORWARD na tabela filter.",
+            "A IR normaliza condições reconhecidas, mas não calcula ainda o resultado efetivo do tráfego.",
+            "Regras parcialmente interpretadas ou não normalizadas não são consideradas semanticamente validadas.",
             "As regras individuais ainda não são comparadas semanticamente com a política JSON.",
             "As opções e respetivos valores não são avaliados para decidir se um fluxo é permitido.",
             "Targets desconhecidos ficam inconclusivos até serem identificados.",
