@@ -10,6 +10,7 @@ from cce.drift import compare_policies
 from cce.engine import analyze
 from cce.live import analyze_live_ruleset
 from cce.iptables_save import analyze_iptables_saves
+from cce.iptables_risk import find_ssh_rule_candidates
 from cce.models import (
     InputError,
     load_json,
@@ -269,6 +270,20 @@ def main():
                 ipv6_text,
             )
 
+            candidates = (
+                find_ssh_rule_candidates(ipv4_text, "ipv4")
+                + find_ssh_rule_candidates(ipv6_text, "ipv6")
+            )
+            result["rule_risk_candidates"] = candidates
+            result["summary"]["rules_scanned_for_risk_patterns"] = (
+                result["summary"]["rules_total"]
+            )
+            result["summary"]["rule_risk_candidates"] = len(candidates)
+            result["limitations"].append(
+                "A deteção SSH/TCP/22 é heurística; candidatos não provam "
+                "acessibilidade externa nem disponibilidade do serviço."
+            )
+
             report = {
                 "schema_version": "1.0",
                 "engine": {
@@ -306,8 +321,18 @@ def main():
                 f"Políticas coincidentes: "
                 f"{summary['base_policies_matched']} | "
                 f"Divergências: "
-                f"{summary['base_policy_mismatches']}"
+                f"{summary['base_policy_mismatches']} | "
+                f"Riscos candidatos: "
+                f"{summary['rule_risk_candidates']}"
             )
+            for candidate in result["rule_risk_candidates"]:
+                print(
+                    f"[{candidate['severity'].upper()}] "
+                    f"{candidate['code']}: possível SSH/TCP/22 "
+                    f"na cadeia {candidate['chain']} "
+                    f"(linha {candidate['line_number']})"
+                )
+
             print(f"Relatório: {args.output}")
 
             if result["status"] == "DRIFT":
