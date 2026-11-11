@@ -272,6 +272,8 @@ def _parse_rule_tokens(
     target_operation: str | None = None
     fragment_only: bool | None = None
     tcp_syn_only: bool | None = None
+    saw_ctstate = False
+    saw_state = False
 
     index = 2
     while index < len(tokens):
@@ -451,7 +453,14 @@ def _parse_rule_tokens(
                 continue
 
             if option in PORT_OPTION_FIELDS:
-                parsed_ranges = _parse_port_ranges(value)
+                is_multiport_option = option in {
+                    "--sports", "--dports", "--ports"
+                }
+                parsed_ranges = (
+                    None
+                    if "," in value and not is_multiport_option
+                    else _parse_port_ranges(value)
+                )
                 if parsed_ranges is None:
                     _unique_append(unsupported_options, option)
                     _unique_append(warnings, "unresolved_port_specification")
@@ -471,6 +480,10 @@ def _parse_rule_tokens(
                 continue
 
             if option in {"--ctstate", "--state"}:
+                if option == "--ctstate":
+                    saw_ctstate = True
+                else:
+                    saw_state = True
                 states = [
                     state.strip().upper()
                     for state in value.split(",")
@@ -526,8 +539,28 @@ def _parse_rule_tokens(
     elif protocol is not None and transport_modules and protocol not in transport_modules:
         _unique_append(warnings, "protocol_module_mismatch")
 
+    has_port_conditions = bool(
+        source_ports or destination_ports or either_ports
+    )
+    has_multiport_selectors = any(
+        option in {"--sports", "--dports", "--ports"}
+        for option in tokens
+    )
+
+    if has_port_conditions and protocol not in {"tcp", "udp"}:
+        _unique_append(warnings, "port_selector_without_transport_protocol")
+    if has_multiport_selectors and "multiport" not in modules:
+        _unique_append(warnings, "multiport_selector_without_module")
     if "multiport" in modules and protocol not in {"tcp", "udp"}:
         _unique_append(warnings, "multiport_without_supported_transport")
+    if tcp_syn_only is not None and protocol != "tcp":
+        _unique_append(warnings, "tcp_syn_without_tcp_protocol")
+    if saw_ctstate and "conntrack" not in modules:
+        _unique_append(warnings, "ctstate_without_conntrack_module")
+    if saw_state and "state" not in modules:
+        _unique_append(warnings, "state_without_state_module")
+    if fragment_only and family == "ipv6":
+        _unique_append(warnings, "ipv4_fragment_match_in_ipv6_snapshot")
 
     interpretation = (
         "complete"
