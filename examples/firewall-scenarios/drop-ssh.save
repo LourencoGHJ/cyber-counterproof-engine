@@ -1,0 +1,7 @@
+# Synthetic scenario: SSH allow rule is restricted to a different source network.
+*filter
+:INPUT DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:FORWARD DROP [0:0]
+-A INPUT -p tcp -s 192.0.2.0/24 --dport 22 -j ACCEPT
+COMMIT
