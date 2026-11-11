@@ -20,7 +20,7 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Local dashboard:** presents an HTML summary of monitoring history.
 - **Packet evaluation:** simulates a packet against a supported iptables filter-chain subset, including TCP flag masks, and explains the rule-by-rule result.
 - **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes, including SYN-only matching, from synthetic fixtures.
-- **Rule conflict analysis:** detects exact duplicates, redundant rules, proven shadowing, and potential overlaps between opposing terminal verdicts.
+- **Rule conflict analysis:** detects exact duplicates, redundant rules, proven shadowing, potential verdict overlaps, and TCP rules whose flag conditions can never match.
 - **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
 
 ## DevSecOps in the development lifecycle
@@ -88,7 +88,7 @@ Analyze a synthetic iptables-save snapshot for duplicate, redundant, shadowed, a
 
     cce analyze-rule-conflicts --snapshot examples/firewall-scenarios/conflicting-rules.save --family ipv4 --output reports/conflicts/analysis.json
 
-The analysis compares only fully interpreted terminal rules within the same chain of the `filter` table. It reports full shadowing as proven only when an earlier rule covers every packet that could match a later rule. Opposing verdicts that may match some of the same traffic, without proven full coverage, are reported as potential overlaps. Partially interpreted and non-terminal rules are counted but excluded. Exit code 0 means no findings, 1 means findings were detected, and 2 means invalid or malformed input. The report omits raw network/interface selectors and original rule text; it retains the snapshot path and SHA-256 evidence hash.
+The analysis compares only fully interpreted terminal rules within the same chain of the `filter` table. It reports full shadowing as proven only when an earlier rule covers every packet that could match a later rule. Opposing verdicts that may match some of the same traffic, without proven full coverage, are reported as potential overlaps. It also detects supported TCP flag conditions that are impossible to satisfy and reports them as unmatchable rules, separately from shadowed rules. Partially interpreted and non-terminal rules are counted but excluded. Exit code 0 means no findings, 1 means findings were detected, and 2 means invalid or malformed input. The report omits raw network/interface selectors and original rule text; it retains the snapshot path and SHA-256 evidence hash.
 
 ## Build and smoke-test the Docker image
 
