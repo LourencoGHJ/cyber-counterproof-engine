@@ -355,6 +355,7 @@ def analyze_iptables_rule_conflicts(
 
     for chain, chain_rules in by_chain.items():
         chain_rules.sort(key=lambda item: item.line_number)
+        shadowed_lines: set[int] = set()
 
         for later_index, later in enumerate(chain_rules):
             later_verdict = _terminal_verdict(later)
@@ -363,6 +364,9 @@ def analyze_iptables_rule_conflicts(
             shadowing: tuple[RuleIR, str, str] | None = None
 
             for earlier in chain_rules[:later_index]:
+                if earlier.line_number in shadowed_lines:
+                    continue
+
                 earlier_verdict = _terminal_verdict(earlier)
                 assert earlier_verdict is not None
 
@@ -379,6 +383,7 @@ def analyze_iptables_rule_conflicts(
                     potential_pairs.append((earlier, earlier_verdict))
 
             if shadowing is not None:
+                shadowed_lines.add(later.line_number)
                 earlier, earlier_verdict, relation = shadowing
                 if relation == "same" and earlier_verdict == later_verdict:
                     code = "DUPLICATE_RULE"
