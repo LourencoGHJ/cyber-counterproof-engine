@@ -187,6 +187,8 @@ def main():
                 f"Duplicadas: {summary['duplicate_rules']} | "
                 f"Redundantes: {summary['redundant_rules']} | "
                 f"Sombreadas: {summary['shadowed_rules']} | "
+                f"Sem correspondência: "
+                f"{summary['unmatchable_terminal_rules']} | "
                 f"Sobreposições potenciais: "
                 f"{summary['potential_verdict_overlaps']} | "
                 f"Parciais ignoradas: {summary['partial_rules_skipped']} | "
@@ -194,13 +196,22 @@ def main():
                 f"{summary['non_terminal_rules_skipped']}"
             )
             for finding in result["findings"]:
+                if finding["earlier_line"] is None:
+                    location = f"{finding['chain']}:{finding['later_line']}"
+                    verdicts = str(finding["later_verdict"])
+                else:
+                    location = (
+                        f"{finding['chain']}:{finding['earlier_line']} -> "
+                        f"{finding['later_line']}"
+                    )
+                    verdicts = (
+                        f"{finding['earlier_verdict']} / "
+                        f"{finding['later_verdict']}"
+                    )
                 print(
                     f"[{finding['severity'].upper()}] "
                     f"{finding['id']} {finding['code']} | "
-                    f"{finding['chain']}:{finding['earlier_line']} -> "
-                    f"{finding['later_line']} | "
-                    f"{finding['earlier_verdict']} / "
-                    f"{finding['later_verdict']}"
+                    f"{location} | {verdicts}"
                 )
             print(f"Relatório: {args.output}")
             return 1 if summary["findings_total"] else 0
