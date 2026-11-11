@@ -520,7 +520,9 @@ def analyze_iptables_rule_conflicts(
             "unmatchable_terminal_rules": unmatchable_count,
             "partial_rules_skipped": len(partial_rules),
             "non_terminal_rules_skipped": (
-                len(filter_rules) - len(partial_rules) - len(terminal_rules)
+                len(filter_rules)
+                - len(partial_rules)
+                - len(complete_terminal_rules)
             ),
             "duplicate_rules": duplicate_count,
             "redundant_rules": redundant_count,
