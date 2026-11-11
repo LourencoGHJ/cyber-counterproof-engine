@@ -274,6 +274,7 @@ def _parse_rule_tokens(
     tcp_syn_only: bool | None = None
     saw_ctstate = False
     saw_state = False
+    saw_multiport_selector = False
 
     index = 2
     while index < len(tokens):
@@ -456,6 +457,8 @@ def _parse_rule_tokens(
                 is_multiport_option = option in {
                     "--sports", "--dports", "--ports"
                 }
+                if is_multiport_option:
+                    saw_multiport_selector = True
                 parsed_ranges = (
                     None
                     if "," in value and not is_multiport_option
@@ -542,14 +545,9 @@ def _parse_rule_tokens(
     has_port_conditions = bool(
         source_ports or destination_ports or either_ports
     )
-    has_multiport_selectors = any(
-        option in {"--sports", "--dports", "--ports"}
-        for option in tokens
-    )
-
     if has_port_conditions and protocol not in {"tcp", "udp"}:
         _unique_append(warnings, "port_selector_without_transport_protocol")
-    if has_multiport_selectors and "multiport" not in modules:
+    if saw_multiport_selector and "multiport" not in modules:
         _unique_append(warnings, "multiport_selector_without_module")
     if "multiport" in modules and protocol not in {"tcp", "udp"}:
         _unique_append(warnings, "multiport_without_supported_transport")
