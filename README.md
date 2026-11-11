@@ -20,6 +20,7 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Local dashboard:** presents an HTML summary of monitoring history.
 - **Packet evaluation:** simulates a packet against a supported iptables filter-chain subset, including TCP flag masks, and explains the rule-by-rule result.
 - **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes, including SYN-only matching, from synthetic fixtures.
+- **Rule conflict analysis:** detects exact duplicates, redundant rules, proven shadowing, and potential overlaps between opposing terminal verdicts.
 - **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
 
 ## DevSecOps in the development lifecycle
@@ -82,6 +83,12 @@ Run the synthetic packet scenarios together:
     cce evaluate-scenarios --manifest examples/firewall-scenarios.json --output reports/scenarios/summary.json
 
 The scenario runner checks five expected outcomes: HTTPS `ACCEPT`, source-restricted SSH `DROP`, Telnet `REJECT`, an unsupported rate-limit rule `INCONCLUSIVE`, and a SYN+ACK packet that must not match a SYN-only rule. The evaluator supports `--tcp-flags mask comp` for the standard SYN, ACK, FIN, RST, URG, and PSH flags, including the `ALL` and `NONE` aliases. It compares only the flags selected by the mask; missing packet-flag metadata produces `INCONCLUSIVE` when those bits are required. The IR schema is now version `1.1`. The scenario runner exits with code 0 when every actual result matches its expected result, code 1 when any scenario differs, and code 2 for invalid inputs. An expected `INCONCLUSIVE` is a successful test of conservative behaviour, not a conclusive packet verdict. The JSON report contains a machine-readable trace and Portuguese explanations for each evaluated rule and final decision.
+
+Analyze a synthetic iptables-save snapshot for duplicate, redundant, shadowed, and potentially overlapping terminal rules:
+
+    cce analyze-rule-conflicts --snapshot examples/firewall-scenarios/conflicting-rules.save --family ipv4 --output reports/conflicts/analysis.json
+
+The analysis compares only fully interpreted terminal rules within the same chain of the `filter` table. It reports full shadowing as proven only when an earlier rule covers every packet that could match a later rule. Opposing verdicts that may match some of the same traffic, without proven full coverage, are reported as potential overlaps. Partially interpreted and non-terminal rules are counted but excluded. Exit code 0 means no findings, 1 means findings were detected, and 2 means invalid or malformed input. The report omits raw network/interface selectors and original rule text; it retains the snapshot path and SHA-256 evidence hash.
 
 ## Build and smoke-test the Docker image
 
