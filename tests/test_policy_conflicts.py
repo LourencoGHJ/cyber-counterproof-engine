@@ -218,3 +218,23 @@ def test_negated_fragment_selector_is_disjoint_from_fragment_only_rule():
     )
 
     assert result["findings"] == []
+
+
+
+def test_does_not_use_proven_shadowed_rule_as_later_conflict_evidence():
+    result = analyze(
+        "-A INPUT -s 192.0.2.0/24 -p tcp -j ACCEPT\n"
+        "-A INPUT -s 192.0.2.10/32 -p tcp -j DROP\n"
+        "-A INPUT -s 192.0.0.0/16 -p tcp --dport 443 -j REJECT\n"
+    )
+
+    assert codes(result) == [
+        "SHADOWED_RULE",
+        "OVERLAPPING_VERDICTS",
+    ]
+    overlap = next(
+        finding for finding in result["findings"]
+        if finding["code"] == "OVERLAPPING_VERDICTS"
+    )
+    assert overlap["earlier_line"] == 5
+    assert overlap["later_line"] == 7
