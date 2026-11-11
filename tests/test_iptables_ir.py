@@ -407,3 +407,38 @@ def test_ir_json_serializes_tcp_flag_fields_as_lists():
     document = rule.to_dict()
     assert document["tcp_flags_mask"] == ["SYN", "ACK"]
     assert document["tcp_flags_comp"] == ["SYN"]
+
+
+
+def test_supports_inline_tcp_flags_mask_value():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags=SYN,ACK SYN -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask == ("SYN", "ACK")
+    assert rule.tcp_flags_comp == ("SYN",)
+    assert rule.interpretation == "complete"
+
+
+def test_missing_tcp_flags_comparison_is_partial_and_preserves_target():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN -j DROP"
+    )
+
+    assert rule.tcp_flags_mask is None
+    assert rule.target == "DROP"
+    assert "--tcp-flags" in rule.unsupported_options
+    assert "missing_value:--tcp-flags" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_multiple_tcp_flags_selectors_are_not_silently_combined():
+    rule = first_rule(
+        "-A INPUT -p tcp --tcp-flags SYN,ACK SYN "
+        "--tcp-flags FIN,ACK FIN -j ACCEPT"
+    )
+
+    assert rule.tcp_flags_mask == ("SYN", "ACK")
+    assert "--tcp-flags" in rule.unsupported_options
+    assert "multiple_tcp_flags_selectors" in rule.warnings
+    assert rule.interpretation == "partial"
