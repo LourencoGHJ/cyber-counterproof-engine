@@ -299,7 +299,11 @@ def _parse_rule_tokens(
             if inline_value is not None:
                 target_value = inline_value
                 index += 1
-            elif index + 1 < len(tokens):
+            elif (
+                index + 1 < len(tokens)
+                and not tokens[index + 1].startswith("-")
+                and tokens[index + 1] != "!"
+            ):
                 target_value = tokens[index + 1]
                 index += 2
             else:
@@ -328,7 +332,10 @@ def _parse_rule_tokens(
             if inline_value is not None:
                 module = inline_value
                 index += 1
-            elif index + 1 < len(tokens):
+            elif (
+                index + 1 < len(tokens)
+                and not tokens[index + 1].startswith("-")
+            ):
                 module = tokens[index + 1]
                 index += 2
             else:
@@ -373,8 +380,14 @@ def _parse_rule_tokens(
                     negated = not negated
                     value_index += 1
 
-                values = tokens[value_index:value_index + arity]
-                index = value_index + len(values)
+                values = []
+                while len(values) < arity and value_index < len(tokens):
+                    candidate = tokens[value_index]
+                    if candidate.startswith("-"):
+                        break
+                    values.append(candidate)
+                    value_index += 1
+                index = value_index
 
             if len(values) != arity:
                 _unique_append(
