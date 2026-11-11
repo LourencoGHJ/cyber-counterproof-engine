@@ -206,6 +206,26 @@ def _match_rule(rule: RuleIR, packet: Packet) -> tuple[str, str]:
         if not check(syn_match, "tcp_flags_unavailable"):
             return "NO_MATCH", "tcp_flags_mismatch"
 
+    if rule.tcp_flags_mask is not None:
+        if packet.protocol != "tcp":
+            flags_match: bool | None = False
+        elif not rule.tcp_flags_mask:
+            # NONE as a mask examines no bits; the empty comparison is true.
+            flags_match = not rule.tcp_flags_comp
+        elif packet.tcp_flags is None:
+            flags_match = None
+        else:
+            selected_flags = packet.tcp_flags.intersection(
+                rule.tcp_flags_mask
+            )
+            flags_match = selected_flags == set(rule.tcp_flags_comp or ())
+
+        if "tcp_flags" in rule.negated_conditions and flags_match is not None:
+            flags_match = not flags_match
+
+        if not check(flags_match, "tcp_flags_unavailable"):
+            return "NO_MATCH", "tcp_flags_mask_mismatch"
+
     # A known positive-condition mismatch safely rules the rule out even
     # when another condition is unsupported. If all known conditions match,
     # unsupported semantics prevent a definitive match.
