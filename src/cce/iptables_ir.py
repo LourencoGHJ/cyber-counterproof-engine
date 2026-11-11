@@ -289,8 +289,37 @@ def _parse_rule_tokens(
             negated = False
 
         option, inline_value = token, None
-        if token.startswith("--") and "=" in token:
+        if token.startswith("-") and "=" in token:
             option, inline_value = token.split("=", 1)
+
+        if option in {"-j", "--jump", "-g", "--goto"}:
+            if inline_value is not None:
+                target_value = inline_value
+                index += 1
+            elif index + 1 < len(tokens):
+                target_value = tokens[index + 1]
+                index += 2
+            else:
+                _unique_append(warnings, "missing_target")
+                index += 1
+                continue
+
+            if negated:
+                _unique_append(warnings, "negated_target")
+            if target is not None:
+                _unique_append(warnings, "multiple_targets")
+                continue
+
+            target_operation = (
+                "goto" if option in {"-g", "--goto"} else "jump"
+            )
+            if target_value.upper() in CORE_VERDICTS:
+                target = target_value.upper()
+            else:
+                target = target_value
+                if target_value not in declared_chains:
+                    _unique_append(unsupported_targets, target_value)
+            continue
 
         if option in {"-m", "--match"}:
             if inline_value is not None:
@@ -329,16 +358,20 @@ def _parse_rule_tokens(
                 values = [inline_value]
                 index += 1
                 if arity > 1:
-                    values.extend(tokens[index:index + arity - 1])
-                    index += arity - 1
+                    extra = tokens[index:index + arity - 1]
+                    values.extend(extra)
+                    index += len(extra)
             else:
-                values = tokens[index + 1:index + 1 + arity]
-                index += 1 + len(values)
-
-                if values and values[0] == "!":
+                value_index = index + 1
+                if (
+                    value_index < len(tokens)
+                    and tokens[value_index] == "!"
+                ):
                     negated = not negated
-                    values = values[1:]
-                    index += 1
+                    value_index += 1
+
+                values = tokens[value_index:value_index + arity]
+                index = value_index + len(values)
 
             if len(values) != arity:
                 _unique_append(
@@ -480,29 +513,21 @@ def _parse_rule_tokens(
         _unique_append(warnings, "unexpected_token")
         index += 1
 
-    for index, token in enumerate(tokens):
-        if token not in {"-j", "--jump", "-g", "--goto"}:
-            continue
+    if target is None:
+        _unique_append(warnings, "missing_target")
 
-        if index + 1 >= len(tokens):
-            _unique_append(warnings, "missing_target")
-            continue
+    transport_modules = {
+        module for module in modules if module in {"tcp", "udp"}
+    }
+    if protocol is None and len(transport_modules) == 1:
+        protocol = next(iter(transport_modules))
+    elif len(transport_modules) > 1:
+        _unique_append(warnings, "conflicting_transport_modules")
+    elif protocol is not None and transport_modules and protocol not in transport_modules:
+        _unique_append(warnings, "protocol_module_mismatch")
 
-        if target is not None:
-            _unique_append(warnings, "multiple_targets")
-            continue
-
-        target_value = tokens[index + 1]
-        target_operation = (
-            "goto" if token in {"-g", "--goto"} else "jump"
-        )
-
-        if target_value.upper() in CORE_VERDICTS:
-            target = target_value.upper()
-        else:
-            target = target_value
-            if target_value not in declared_chains:
-                _unique_append(unsupported_targets, target_value)
+    if "multiport" in modules and protocol not in {"tcp", "udp"}:
+        _unique_append(warnings, "multiport_without_supported_transport")
 
     interpretation = (
         "complete"
