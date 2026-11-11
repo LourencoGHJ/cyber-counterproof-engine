@@ -4,7 +4,7 @@ from pathlib import Path
 from cce.cli import main
 
 
-def test_evaluate_scenarios_matches_all_four_expected_verdicts(
+def test_evaluate_scenarios_matches_all_five_expected_verdicts(
     tmp_path, monkeypatch, capsys
 ):
     project_root = Path(__file__).resolve().parents[1]
@@ -33,13 +33,16 @@ def test_evaluate_scenarios_matches_all_four_expected_verdicts(
         "[OK] https-rate-limit-unsupported: "
         "esperado=INCONCLUSIVE obtido=INCONCLUSIVE"
     ) in stdout
-    assert "CCE: 4/4 cenários corretos" in stdout
+    assert (
+        "[OK] tcp-synack-not-initial-syn: esperado=DROP obtido=DROP"
+    ) in stdout
+    assert "CCE: 5/5 cenários corretos" in stdout
 
     report_text = output.read_text(encoding="utf-8")
     report = json.loads(report_text)
     assert report["summary"] == {
-        "scenarios_total": 4,
-        "scenarios_passed": 4,
+        "scenarios_total": 5,
+        "scenarios_passed": 5,
         "scenarios_failed": 0,
     }
     actual = {item["id"]: item["actual"] for item in report["scenarios"]}
@@ -48,6 +51,7 @@ def test_evaluate_scenarios_matches_all_four_expected_verdicts(
         "ssh-source-restricted": "DROP",
         "telnet-rejected": "REJECT",
         "https-rate-limit-unsupported": "INCONCLUSIVE",
+        "tcp-synack-not-initial-syn": "DROP",
     }
 
     for scenario in report["scenarios"]:
@@ -56,11 +60,18 @@ def test_evaluate_scenarios_matches_all_four_expected_verdicts(
         for step in scenario["result"]["trace"]:
             assert step["explanation"]
 
+    syn_ack = next(
+        item for item in report["scenarios"]
+        if item["id"] == "tcp-synack-not-initial-syn"
+    )
+    assert syn_ack["result"]["trace"][0]["reason"] == "tcp_flags_mask_mismatch"
+
     # Reports must not include packet IP addresses from the synthetic inputs.
     assert "192.0.2.10" not in report_text
     assert "198.51.100.20" not in report_text
     assert "203.0.113.25" not in report_text
     assert "203.0.113.30" not in report_text
+    assert "203.0.113.45" not in report_text
 
 
 def test_evaluate_scenarios_returns_failure_when_expected_verdict_is_wrong(
