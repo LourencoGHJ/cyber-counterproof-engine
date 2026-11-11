@@ -249,6 +249,7 @@ def test_detects_terminal_rules_with_impossible_tcp_flag_conditions():
 
     assert result["summary"]["unmatchable_terminal_rules"] == 2
     assert result["summary"]["terminal_rules_analyzed"] == 0
+    assert result["summary"]["non_terminal_rules_skipped"] == 0
     assert [item["code"] for item in result["findings"]] == [
         "UNMATCHABLE_RULE",
         "UNMATCHABLE_RULE",
