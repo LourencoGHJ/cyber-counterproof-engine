@@ -238,3 +238,19 @@ def test_does_not_use_proven_shadowed_rule_as_later_conflict_evidence():
     )
     assert overlap["earlier_line"] == 5
     assert overlap["later_line"] == 7
+
+
+
+def test_detects_terminal_rules_with_impossible_tcp_flag_conditions():
+    result = analyze(
+        "-A INPUT -p tcp ! --tcp-flags NONE NONE -j DROP\n"
+        "-A INPUT -p tcp --syn --tcp-flags SYN,ACK ACK -j ACCEPT\n"
+    )
+
+    assert result["summary"]["unmatchable_terminal_rules"] == 2
+    assert result["summary"]["terminal_rules_analyzed"] == 0
+    assert [item["code"] for item in result["findings"]] == [
+        "UNMATCHABLE_RULE",
+        "UNMATCHABLE_RULE",
+    ]
+    assert all(item["certainty"] == "proven" for item in result["findings"])
