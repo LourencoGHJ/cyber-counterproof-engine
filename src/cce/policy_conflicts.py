@@ -472,6 +472,9 @@ def analyze_iptables_rule_conflicts(
             "filter_rules_total": len(filter_rules),
             "terminal_rules_analyzed": len(terminal_rules),
             "partial_rules_skipped": len(partial_rules),
+            "non_terminal_rules_skipped": (
+                len(filter_rules) - len(partial_rules) - len(terminal_rules)
+            ),
             "duplicate_rules": duplicate_count,
             "redundant_rules": redundant_count,
             "shadowed_rules": shadowed_count,
