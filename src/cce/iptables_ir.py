@@ -14,7 +14,7 @@ from typing import Any
 from cce.iptables_save import parse_iptables_save
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 SUPPORTED_MODULES = {
     "tcp",
@@ -47,6 +47,8 @@ SUPPORTED_CONNECTION_STATES = {
 }
 
 CORE_VERDICTS = {"ACCEPT", "DROP", "REJECT", "RETURN"}
+TCP_FLAG_ORDER = ("FIN", "SYN", "RST", "PSH", "ACK", "URG")
+TCP_FLAG_NAMES = frozenset(TCP_FLAG_ORDER)
 
 VALUE_OPTIONS = {
     "-p": 1,
@@ -144,6 +146,8 @@ class RuleIR:
     target_operation: str | None
     fragment_only: bool | None
     tcp_syn_only: bool | None
+    tcp_flags_mask: tuple[str, ...] | None
+    tcp_flags_comp: tuple[str, ...] | None
     negated_conditions: tuple[str, ...]
     unsupported_modules: tuple[str, ...]
     unsupported_options: tuple[str, ...]
@@ -163,6 +167,10 @@ class RuleIR:
                 port.to_dict() if isinstance(port, PortRange) else port
                 for port in getattr(self, field)
             ]
+
+        for field in ("tcp_flags_mask", "tcp_flags_comp"):
+            value = getattr(self, field)
+            result[field] = list(value) if value is not None else None
 
         for field in (
             "connection_states",
@@ -219,6 +227,25 @@ def _parse_port_ranges(value: str) -> tuple[PortRange, ...] | None:
     return tuple(ranges)
 
 
+def _parse_tcp_flag_list(value: str) -> tuple[str, ...] | None:
+    """Parse iptables TCP flag names, including the ALL and NONE aliases."""
+    normalized = value.strip().upper()
+    if normalized == "ALL":
+        return TCP_FLAG_ORDER
+    if normalized == "NONE":
+        return ()
+
+    parts = [part.strip().upper() for part in normalized.split(",")]
+    if (
+        not parts
+        or any(not part or part not in TCP_FLAG_NAMES for part in parts)
+        or len(parts) != len(set(parts))
+    ):
+        return None
+
+    return tuple(flag for flag in TCP_FLAG_ORDER if flag in parts)
+
+
 def _normalise_network(
     value: str,
     family: str,
@@ -272,6 +299,8 @@ def _parse_rule_tokens(
     target_operation: str | None = None
     fragment_only: bool | None = None
     tcp_syn_only: bool | None = None
+    tcp_flags_mask: tuple[str, ...] | None = None
+    tcp_flags_comp: tuple[str, ...] | None = None
     saw_ctstate = False
     saw_state = False
     saw_multiport_selector = False
@@ -398,6 +427,26 @@ def _parse_rule_tokens(
                 continue
 
             value = values[0]
+
+            if option == "--tcp-flags":
+                parsed_mask = _parse_tcp_flag_list(values[0])
+                parsed_comp = _parse_tcp_flag_list(values[1])
+                if (
+                    parsed_mask is None
+                    or parsed_comp is None
+                    or not set(parsed_comp).issubset(parsed_mask)
+                ):
+                    _unique_append(unsupported_options, option)
+                    _unique_append(warnings, "invalid_tcp_flags_specification")
+                elif tcp_flags_mask is not None:
+                    _unique_append(unsupported_options, option)
+                    _unique_append(warnings, "multiple_tcp_flags_selectors")
+                else:
+                    tcp_flags_mask = parsed_mask
+                    tcp_flags_comp = parsed_comp
+                if negated:
+                    _unique_append(negated_conditions, "tcp_flags")
+                continue
 
             if option in IGNORED_METADATA_OPTIONS:
                 # Comentários não são condições de correspondência.
@@ -566,6 +615,8 @@ def _parse_rule_tokens(
         _unique_append(warnings, "multiport_without_supported_transport")
     if tcp_syn_only is not None and protocol != "tcp":
         _unique_append(warnings, "tcp_syn_without_tcp_protocol")
+    if tcp_flags_mask is not None and protocol != "tcp":
+        _unique_append(warnings, "tcp_flags_without_tcp_protocol")
     if saw_ctstate and "conntrack" not in modules:
         _unique_append(warnings, "ctstate_without_conntrack_module")
     if saw_state and "state" not in modules:
@@ -604,6 +655,8 @@ def _parse_rule_tokens(
         target_operation=target_operation,
         fragment_only=fragment_only,
         tcp_syn_only=tcp_syn_only,
+        tcp_flags_mask=tcp_flags_mask,
+        tcp_flags_comp=tcp_flags_comp,
         negated_conditions=tuple(negated_conditions),
         unsupported_modules=tuple(unsupported_modules),
         unsupported_options=tuple(unsupported_options),
