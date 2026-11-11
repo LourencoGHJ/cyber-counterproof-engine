@@ -402,3 +402,85 @@ def test_snapshot_family_mismatch_is_inconclusive():
 
     assert result.status == "INCONCLUSIVE"
     assert result.decision_source == "input_validation"
+
+
+
+def test_evaluates_tcp_flags_mask_and_comparison():
+    result = evaluate(
+        make_snapshot(
+            "-A INPUT -p tcp --tcp-flags SYN,ACK,FIN,RST SYN -j ACCEPT\n"
+        ),
+        packet(tcp_flags=frozenset({"SYN"})),
+    )
+
+    assert result.status == "ACCEPT"
+    assert result.trace[0].result == "match"
+
+
+def test_tcp_flags_outside_mask_do_not_change_match_result():
+    result = evaluate(
+        make_snapshot(
+            "-A INPUT -p tcp --tcp-flags SYN,ACK SYN -j ACCEPT\n"
+        ),
+        packet(tcp_flags=frozenset({"SYN", "ECE"})),
+    )
+
+    assert result.status == "ACCEPT"
+
+
+def test_tcp_flags_inside_mask_can_prevent_match():
+    result = evaluate(
+        make_snapshot(
+            "-A INPUT -p tcp --tcp-flags SYN,ACK,FIN,RST SYN -j ACCEPT\n"
+        ),
+        packet(tcp_flags=frozenset({"SYN", "ACK"})),
+    )
+
+    assert result.status == "DROP"
+    assert result.trace[0].reason == "tcp_flags_mask_mismatch"
+
+
+def test_negated_tcp_flags_rule_matches_packets_that_fail_comparison():
+    snapshot = make_snapshot(
+        "-A INPUT -p tcp ! --tcp-flags SYN,ACK SYN -j ACCEPT\n"
+    )
+
+    syn = evaluate(snapshot, packet(tcp_flags=frozenset({"SYN"})))
+    ack = evaluate(snapshot, packet(tcp_flags=frozenset({"ACK"})))
+
+    assert syn.status == "DROP"
+    assert ack.status == "ACCEPT"
+
+
+def test_tcp_flags_mask_requires_packet_flag_metadata():
+    result = evaluate(
+        make_snapshot(
+            "-A INPUT -p tcp --tcp-flags SYN,ACK SYN -j ACCEPT\n"
+        ),
+        packet(tcp_flags=None),
+    )
+
+    assert result.status == "INCONCLUSIVE"
+    assert result.trace[0].result == "inconclusive"
+
+
+def test_all_none_tcp_flag_comparison_matches_packet_without_tcp_flags():
+    result = evaluate(
+        make_snapshot(
+            "-A INPUT -p tcp --tcp-flags ALL NONE -j ACCEPT\n"
+        ),
+        packet(tcp_flags=frozenset()),
+    )
+
+    assert result.status == "ACCEPT"
+
+
+def test_none_none_tcp_flag_mask_does_not_require_flag_metadata():
+    result = evaluate(
+        make_snapshot(
+            "-A INPUT -p tcp --tcp-flags NONE NONE -j ACCEPT\n"
+        ),
+        packet(tcp_flags=None),
+    )
+
+    assert result.status == "ACCEPT"
