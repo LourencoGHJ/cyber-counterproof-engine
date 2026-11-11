@@ -239,3 +239,84 @@ def test_rejects_structurally_malformed_snapshot():
 
     with pytest.raises(ValueError, match="estruturalmente malformada"):
         parse_iptables_rules_ir(text, "ipv4")
+
+
+def test_single_port_selector_does_not_accept_multiport_csv_syntax():
+    rule = first_rule(
+        "-A INPUT -p tcp -m tcp --dport 22,80 -j ACCEPT"
+    )
+
+    assert rule.destination_ports == ()
+    assert "--dport" in rule.unsupported_options
+    assert rule.interpretation == "partial"
+
+
+def test_port_selector_without_transport_protocol_is_partial():
+    rule = first_rule(
+        "-A INPUT -p icmp -m icmp --dport 22 -j ACCEPT"
+    )
+
+    assert rule.destination_ports[0].first == 22
+    assert "port_selector_without_transport_protocol" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_multiport_option_without_multiport_module_is_partial():
+    rule = first_rule(
+        "-A INPUT -p tcp --dports 22,443 -j ACCEPT"
+    )
+
+    assert "multiport_selector_without_module" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_tcp_syn_flag_without_tcp_protocol_is_partial():
+    rule = first_rule(
+        "-A INPUT -p udp --syn -j ACCEPT"
+    )
+
+    assert rule.tcp_syn_only is True
+    assert "tcp_syn_without_tcp_protocol" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_ctstate_without_conntrack_module_is_partial():
+    rule = first_rule(
+        "-A INPUT --ctstate NEW -j ACCEPT"
+    )
+
+    assert rule.connection_states == ("NEW",)
+    assert "ctstate_without_conntrack_module" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_state_without_state_module_is_partial():
+    rule = first_rule(
+        "-A INPUT --state ESTABLISHED -j ACCEPT"
+    )
+
+    assert "state_without_state_module" in rule.warnings
+    assert rule.interpretation == "partial"
+
+
+def test_inline_protocol_and_target_values_are_supported():
+    rule = first_rule(
+        "-A INPUT --protocol=tcp --jump=ACCEPT"
+    )
+
+    assert rule.protocol == "tcp"
+    assert rule.target == "ACCEPT"
+    assert rule.target_operation == "jump"
+    assert rule.interpretation == "complete"
+
+
+def test_json_document_does_not_include_original_snapshot_line():
+    rule = first_rule(
+        '-A INPUT -m comment --comment "do-not-disclose" '
+        "-p tcp -j ACCEPT"
+    )
+
+    rendered = json.dumps(rule.to_dict(), ensure_ascii=False)
+
+    assert "do-not-disclose" not in rendered
+    assert "-A INPUT" not in rendered
