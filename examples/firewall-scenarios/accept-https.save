@@ -1,0 +1,8 @@
+# Synthetic scenario: HTTPS explicitly allowed.
+*filter
+:INPUT DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:FORWARD DROP [0:0]
+-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+-A INPUT -p tcp --dport 443 -m conntrack --ctstate NEW -j ACCEPT
+COMMIT
