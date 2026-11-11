@@ -45,6 +45,13 @@ def _explain_trace_step(step: dict[str, Any]) -> str:
         "connection_state_mismatch": "O estado da ligação não pertence aos estados exigidos pela regra.",
         "fragment_mismatch": "A condição de fragmentação da regra não corresponde ao pacote.",
         "tcp_flags_mismatch": "As flags TCP disponíveis não correspondem à condição da regra.",
+        "tcp_flags_mask_mismatch": (
+            "As flags TCP selecionadas pela máscara não correspondem às flags "
+            "que a regra exige."
+        ),
+        "tcp_flags_unavailable": (
+            "Não foram fornecidos metadados suficientes para avaliar as flags TCP."
+        ),
         "all_supported_conditions_match": "Todas as condições reconhecidas desta regra correspondem ao pacote.",
         "terminal_verdict": f"A regra correspondeu e aplicou a decisão terminal {action}.",
         "chain_transfer": f"A regra correspondeu e transferiu a avaliação através de {action}.",
