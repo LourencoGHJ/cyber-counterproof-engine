@@ -1,0 +1,7 @@
+# Synthetic scenario: limit is an unsupported extension for the current evaluator.
+*filter
+:INPUT DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:FORWARD DROP [0:0]
+-A INPUT -p tcp --dport 443 -m limit --limit 5/minute -j ACCEPT
+COMMIT
