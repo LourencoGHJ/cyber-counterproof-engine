@@ -36,6 +36,15 @@
       "hook": "INPUT",
       "packet": "packets/https-request.json",
       "expected": "INCONCLUSIVE"
+    },
+    {
+      "id": "tcp-synack-not-initial-syn",
+      "description": "A regra só permite SYN inicial; o pacote SYN+ACK não corresponde e é descartado pela política base.",
+      "snapshot": "firewall-scenarios/tcp-syn-only.save",
+      "family": "ipv4",
+      "hook": "INPUT",
+      "packet": "packets/https-syn-ack.json",
+      "expected": "DROP"
     }
   ]
 }
