@@ -178,3 +178,64 @@ def test_marks_missing_forward_policy_as_unassessed():
     assert "ipv4:forward" in result["summary"]["unassessed_hooks"]
     assert "ipv6:forward" in result["summary"]["unassessed_hooks"]
     assert result["status"] == "INCONCLUSIVE"
+
+
+def test_integrates_rule_ir_metrics_without_claiming_semantic_comparison():
+    result = analyze_iptables_saves(
+        policy(),
+        sample(),
+        sample(),
+    )
+
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["summary"]["rules_total"] == 6
+    assert result["summary"]["rules_ir_normalized"] == 6
+    assert result["summary"]["rules_ir_fully_interpreted"] == 6
+    assert result["summary"]["rules_ir_partially_interpreted"] == 0
+    assert result["summary"]["rules_ir_unparsed"] == 0
+    assert result["summary"]["rules_semantically_compared"] == 0
+    assert result["rule_ir"]["schema_version"] == "1.0"
+
+
+def test_reports_partially_interpreted_rules_in_ir_metrics():
+    ipv4 = sample().replace(
+        "COMMIT\n",
+        "-A INPUT -m recent --name cce-test --set -j ACCEPT\nCOMMIT\n",
+        1,
+    )
+
+    result = analyze_iptables_saves(
+        policy(),
+        ipv4,
+        sample(),
+    )
+
+    assert result["summary"]["rules_ir_normalized"] == 7
+    assert result["summary"]["rules_ir_fully_interpreted"] == 6
+    assert result["summary"]["rules_ir_partially_interpreted"] == 1
+    assert result["rule_ir"]["families"][0]["normalization_status"] == (
+        "normalized_with_partial_rules"
+    )
+    assert result["status"] == "INCONCLUSIVE"
+
+
+def test_marks_ir_unavailable_when_snapshot_has_malformed_lines():
+    ipv4 = sample().replace(
+        "COMMIT\n",
+        "not-an-iptables-rule\nCOMMIT\n",
+        1,
+    )
+
+    result = analyze_iptables_saves(
+        policy(),
+        ipv4,
+        sample(),
+    )
+
+    assert result["summary"]["rules_ir_normalized"] == 3
+    assert result["summary"]["rules_ir_fully_interpreted"] == 3
+    assert result["summary"]["rules_ir_unparsed"] == 3
+    assert result["rule_ir"]["families"][0]["normalization_status"] == (
+        "unavailable"
+    )
+    assert result["status"] == "INCONCLUSIVE"
