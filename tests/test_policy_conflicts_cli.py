@@ -102,3 +102,39 @@ def test_conflict_cli_handles_malformed_snapshot(
     assert main() == 2
     assert "ERRO:" in capsys.readouterr().err
     assert not output.exists()
+
+
+
+def test_conflict_cli_reports_unmatchable_rule_without_pair_location(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = tmp_path / "impossible-flags.save"
+    output = tmp_path / "conflicts.json"
+    snapshot.write_text(
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        "-A INPUT -p tcp ! --tcp-flags NONE NONE -j DROP\n"
+        "COMMIT\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cce",
+            "analyze-rule-conflicts",
+            "--snapshot", str(snapshot),
+            "--family", "ipv4",
+            "--output", str(output),
+        ],
+    )
+
+    assert main() == 1
+    stdout = capsys.readouterr().out
+    assert "UNMATCHABLE_RULE" in stdout
+    assert "INPUT:5 | DROP" in stdout
+
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["result"]["summary"]["unmatchable_terminal_rules"] == 1
