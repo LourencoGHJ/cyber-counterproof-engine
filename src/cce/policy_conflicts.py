@@ -154,6 +154,16 @@ def _tcp_flags_cover(covering: RuleIR, covered: RuleIR) -> bool:
     )
 
 
+def _rule_has_no_tcp_flag_match(rule: RuleIR) -> bool:
+    """Prove that the supported TCP-flag predicates have no satisfying flags."""
+    if not _has_tcp_flag_conditions(rule):
+        return False
+    return not any(
+        _matches_tcp_flags(rule, flags)
+        for flags in _FLAG_COMBINATIONS
+    )
+
+
 def _rules_are_disjoint(left: RuleIR, right: RuleIR) -> bool:
     """Prove disjointness from one independent, fully understood selector."""
     if left.family != right.family:
@@ -337,18 +347,51 @@ def analyze_iptables_rule_conflicts(
         rule for rule in filter_rules if rule.interpretation != "complete"
     ]
 
-    terminal_rules = [
+    complete_terminal_rules = [
         rule
         for rule in filter_rules
         if rule.interpretation == "complete"
         and _terminal_verdict(rule) is not None
+    ]
+    unmatchable_rules = [
+        rule
+        for rule in complete_terminal_rules
+        if _rule_has_no_tcp_flag_match(rule)
+    ]
+    terminal_rules = [
+        rule
+        for rule in complete_terminal_rules
+        if rule not in unmatchable_rules
     ]
     by_chain: dict[str, list[RuleIR]] = {}
     for rule in terminal_rules:
         by_chain.setdefault(rule.chain, []).append(rule)
 
     findings: list[dict[str, Any]] = []
+    for rule in unmatchable_rules:
+        verdict = _terminal_verdict(rule)
+        findings.append(
+            {
+                "code": "UNMATCHABLE_RULE",
+                "severity": "high",
+                "certainty": "proven",
+                "table": rule.table,
+                "chain": rule.chain,
+                "earlier_line": None,
+                "later_line": rule.line_number,
+                "earlier_verdict": None,
+                "later_verdict": verdict,
+                "title": "Regra sem qualquer correspondência possível",
+                "description": (
+                    "As condições de flags TCP desta regra são contraditórias "
+                    "ou impossíveis de satisfazer. Nenhum conjunto de flags "
+                    "avaliado pode corresponder à regra."
+                ),
+            }
+        )
+
     duplicate_count = 0
+    unmatchable_count = len(unmatchable_rules)
     redundant_count = 0
     shadowed_count = 0
     overlap_count = 0
@@ -459,7 +502,7 @@ def analyze_iptables_rule_conflicts(
         key=lambda item: (
             item["chain"],
             item["later_line"],
-            item["earlier_line"],
+            item["earlier_line"] or 0,
             item["code"],
         )
     )
@@ -474,6 +517,7 @@ def analyze_iptables_rule_conflicts(
             "rules_total": len(all_rules),
             "filter_rules_total": len(filter_rules),
             "terminal_rules_analyzed": len(terminal_rules),
+            "unmatchable_terminal_rules": unmatchable_count,
             "partial_rules_skipped": len(partial_rules),
             "non_terminal_rules_skipped": (
                 len(filter_rules) - len(partial_rules) - len(terminal_rules)
