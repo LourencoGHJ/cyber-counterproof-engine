@@ -396,10 +396,12 @@ def _parse_rule_tokens(
             if inline_value is not None:
                 values = [inline_value]
                 index += 1
-                if arity > 1:
-                    extra = tokens[index:index + arity - 1]
-                    values.extend(extra)
-                    index += len(extra)
+                while len(values) < arity and index < len(tokens):
+                    candidate = tokens[index]
+                    if candidate.startswith("-") or candidate == "!":
+                        break
+                    values.append(candidate)
+                    index += 1
             else:
                 value_index = index + 1
                 if (
