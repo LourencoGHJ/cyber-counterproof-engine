@@ -29,6 +29,7 @@ from cce.packet_cli import (
     run_packet_evaluation,
     run_packet_scenarios,
 )
+from cce.policy_conflicts import analyze_iptables_rule_conflicts
 
 
 def make_parser():
@@ -127,6 +128,18 @@ def make_parser():
 
     add_packet_evaluation_parser(subs)
 
+    conflicts = subs.add_parser(
+        "analyze-rule-conflicts",
+        help="Detetar regras redundantes, sombreadas e decisões sobrepostas.",
+    )
+    conflicts.add_argument("--snapshot", required=True)
+    conflicts.add_argument(
+        "--family",
+        required=True,
+        choices=("ipv4", "ipv6"),
+    )
+    conflicts.add_argument("--output", required=True)
+
     return parser
 
 
@@ -139,6 +152,56 @@ def main():
 
         if args.command == "evaluate-scenarios":
             return run_packet_scenarios(args)
+
+        if args.command == "analyze-rule-conflicts":
+            snapshot_path = Path(args.snapshot)
+            snapshot_text = snapshot_path.read_text(encoding="utf-8")
+            result = analyze_iptables_rule_conflicts(
+                snapshot_text,
+                args.family,
+            )
+            report = {
+                "schema_version": "1.0",
+                "engine": {
+                    "name": "Cyber Counterproof Engine",
+                    "version": "0.1.0",
+                },
+                "operation": "analyze_rule_conflicts",
+                "input_evidence": {
+                    "snapshot": {
+                        "path": str(snapshot_path),
+                        "sha256": sha256_file(snapshot_path),
+                    },
+                },
+                "result": result,
+                "privacy_note": (
+                    "O relatório não inclui endereços IP, interfaces ou linhas "
+                    "originais das regras. O hash identifica o ficheiro de entrada, "
+                    "mas não constitui uma assinatura digital."
+                ),
+            }
+            write_json_report(report, args.output)
+            summary = result["summary"]
+            print(
+                f"CCE: {summary['findings_total']} descoberta(s) | "
+                f"Duplicadas: {summary['duplicate_rules']} | "
+                f"Redundantes: {summary['redundant_rules']} | "
+                f"Sombreadas: {summary['shadowed_rules']} | "
+                f"Sobreposições potenciais: "
+                f"{summary['potential_verdict_overlaps']} | "
+                f"Parciais ignoradas: {summary['partial_rules_skipped']}"
+            )
+            for finding in result["findings"]:
+                print(
+                    f"[{finding['severity'].upper()}] "
+                    f"{finding['id']} {finding['code']} | "
+                    f"{finding['chain']}:{finding['earlier_line']} -> "
+                    f"{finding['later_line']} | "
+                    f"{finding['earlier_verdict']} / "
+                    f"{finding['later_verdict']}"
+                )
+            print(f"Relatório: {args.output}")
+            return 1 if summary["findings_total"] else 0
 
         if args.command == "audit":
             policy = load_json(args.policy)
@@ -430,7 +493,8 @@ def main():
         return 2
     except ValueError as exc:
         if args.command not in {
-            "compare-policy", "compare-live", "compare-iptables-save", "monitor", "dashboard"
+            "compare-policy", "compare-live", "compare-iptables-save",
+            "analyze-rule-conflicts", "monitor", "dashboard"
         }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)
