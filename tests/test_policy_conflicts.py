@@ -196,3 +196,15 @@ def test_negated_tcp_syn_rules_are_analyzed_using_effective_condition():
     )
 
     assert result["findings"] == []
+
+
+
+def test_counts_user_chain_transfers_as_non_terminal_rules_skipped():
+    result = analyze(
+        "-A INPUT -j ssh-check\n",
+        extra_chains=":ssh-check - [0:0]\n",
+    )
+
+    assert result["summary"]["terminal_rules_analyzed"] == 0
+    assert result["summary"]["non_terminal_rules_skipped"] == 1
+    assert result["findings"] == []
