@@ -24,6 +24,7 @@ from cce.nftables import (
     write_json_report,
 )
 from cce.report import build_report, write_report, sha256_file
+from cce.packet_cli import add_packet_evaluation_parser, run_packet_evaluation
 
 
 def make_parser():
@@ -120,6 +121,8 @@ def make_parser():
         help="Caminho do dashboard HTML gerado.",
     )
 
+    add_packet_evaluation_parser(subs)
+
     return parser
 
 
@@ -127,6 +130,9 @@ def main():
     args = make_parser().parse_args()
 
     try:
+        if args.command == "evaluate-packet":
+            return run_packet_evaluation(args)
+
         if args.command == "audit":
             policy = load_json(args.policy)
             requirements = load_json(args.requirements)
