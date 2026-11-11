@@ -189,7 +189,9 @@ def main():
                 f"Sombreadas: {summary['shadowed_rules']} | "
                 f"Sobreposições potenciais: "
                 f"{summary['potential_verdict_overlaps']} | "
-                f"Parciais ignoradas: {summary['partial_rules_skipped']}"
+                f"Parciais ignoradas: {summary['partial_rules_skipped']} | "
+                f"Não terminais ignoradas: "
+                f"{summary['non_terminal_rules_skipped']}"
             )
             for finding in result["findings"]:
                 print(
