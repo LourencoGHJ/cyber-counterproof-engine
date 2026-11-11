@@ -18,8 +18,8 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Reproducible evidence:** generates JSON reports and SHA-256 hashes for input files.
 - **nftables integration:** validates rules files with nft --check and can inspect the active ruleset in read-only mode.
 - **Local dashboard:** presents an HTML summary of monitoring history.
-- **Packet evaluation:** simulates a packet against a supported iptables filter-chain subset and explains the rule-by-rule result.
-- **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes from synthetic fixtures.
+- **Packet evaluation:** simulates a packet against a supported iptables filter-chain subset, including TCP flag masks, and explains the rule-by-rule result.
+- **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes, including SYN-only matching, from synthetic fixtures.
 - **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
 
 ## DevSecOps in the development lifecycle
@@ -77,11 +77,11 @@ Evaluate a synthetic packet against an offline iptables-save snapshot (read-only
 
 The example snapshot and packet are synthetic. A conclusive `ACCEPT`, `DROP`, or `REJECT` evaluation exits with code 0; an `INCONCLUSIVE` result exits with code 3. Invalid input exits with code 2. Packet IP addresses and values are omitted from the JSON report; input-file SHA-256 hashes are retained as evidence identifiers.
 
-Run the four synthetic verdict scenarios together:
+Run the synthetic packet scenarios together:
 
     cce evaluate-scenarios --manifest examples/firewall-scenarios.json --output reports/scenarios/summary.json
 
-The scenario runner checks four expected outcomes: HTTPS `ACCEPT`, source-restricted SSH `DROP`, Telnet `REJECT`, and an unsupported rate-limit rule `INCONCLUSIVE`. It exits with code 0 when every actual result matches its expected result, code 1 when any scenario differs, and code 2 for invalid inputs. An expected `INCONCLUSIVE` is a successful test of conservative behaviour, not a conclusive packet verdict. The JSON report contains a machine-readable trace and Portuguese explanations for each evaluated rule and final decision.
+The scenario runner checks five expected outcomes: HTTPS `ACCEPT`, source-restricted SSH `DROP`, Telnet `REJECT`, an unsupported rate-limit rule `INCONCLUSIVE`, and a SYN+ACK packet that must not match a SYN-only rule. The evaluator supports `--tcp-flags mask comp` for the standard SYN, ACK, FIN, RST, URG, and PSH flags, including the `ALL` and `NONE` aliases. It compares only the flags selected by the mask; missing packet-flag metadata produces `INCONCLUSIVE` when those bits are required. The IR schema is now version `1.1`. The scenario runner exits with code 0 when every actual result matches its expected result, code 1 when any scenario differs, and code 2 for invalid inputs. An expected `INCONCLUSIVE` is a successful test of conservative behaviour, not a conclusive packet verdict. The JSON report contains a machine-readable trace and Portuguese explanations for each evaluated rule and final decision.
 
 ## Build and smoke-test the Docker image
 
