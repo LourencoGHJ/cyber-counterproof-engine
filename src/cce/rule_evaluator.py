@@ -208,7 +208,9 @@ def _match_rule(rule: RuleIR, packet: Packet) -> tuple[str, str]:
 
     if rule.tcp_flags_mask is not None:
         if packet.protocol != "tcp":
-            flags_match: bool | None = False
+            # A TCP-flags selector on a non-TCP rule is structurally partial;
+            # do not turn that ambiguity into a definitive non-match.
+            flags_match: bool | None = None
         elif not rule.tcp_flags_mask:
             # NONE as a mask examines no bits; the empty comparison is true.
             flags_match = not rule.tcp_flags_comp
