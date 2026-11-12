@@ -128,6 +128,43 @@ def make_parser():
         help="Caminho do dashboard HTML gerado.",
     )
 
+    live_dashboard = subs.add_parser(
+        "serve-dashboard",
+        help="Servir o estado atual da firewall com atualização em tempo real (read-only).",
+    )
+    live_dashboard.add_argument(
+        "--policy",
+        help="Política declarativa JSON opcional para comparar com o estado atual.",
+    )
+    live_dashboard.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Interface de escuta; por omissão, apenas localhost.",
+    )
+    live_dashboard.add_argument("--port", type=int, default=8765)
+    live_dashboard.add_argument(
+        "--interval-ms",
+        type=int,
+        default=1000,
+        help="Intervalo nominal de recolha em milissegundos (mínimo 1000).",
+    )
+    live_dashboard.add_argument(
+        "--timeout",
+        type=float,
+        default=5,
+        help="Timeout máximo de cada comando de recolha, em segundos.",
+    )
+    live_dashboard.add_argument(
+        "--username",
+        default="cce",
+        help="Utilizador HTTP Basic quando a autenticação está ativa.",
+    )
+    live_dashboard.add_argument(
+        "--password-env",
+        default="CCE_DASHBOARD_PASSWORD",
+        help="Variável de ambiente com a password HTTP Basic.",
+    )
+
     add_packet_evaluation_parser(subs)
 
     snapshot_analysis = subs.add_parser(
@@ -424,6 +461,29 @@ def main():
             print(f"Dashboard gerado: {output}")
             return 0
 
+        if args.command == "serve-dashboard":
+            policy = None
+            if args.policy:
+                policy = load_json(args.policy)
+                errors = validate_policy(policy)
+                if errors:
+                    for error in errors:
+                        print(f"ERRO DE POLÍTICA: {error}", file=sys.stderr)
+                    return 2
+
+            from cce.live_dashboard import serve_live_dashboard
+
+            serve_live_dashboard(
+                host=args.host,
+                port=args.port,
+                policy=policy,
+                interval_ms=args.interval_ms,
+                timeout_seconds=args.timeout,
+                username=args.username,
+                password_env=args.password_env,
+            )
+            return 0
+
         if args.command == "compare-policy":
             expected = load_json(args.expected)
             observed = load_json(args.observed)
@@ -694,7 +754,8 @@ def main():
     except ValueError as exc:
         if args.command not in {
             "compare-policy", "compare-live", "compare-iptables-save",
-            "analyze-rule-conflicts", "analyze-snapshot", "analyze-chain-flow", "monitor", "dashboard"
+            "analyze-rule-conflicts", "analyze-snapshot", "analyze-chain-flow",
+            "monitor", "dashboard", "serve-dashboard"
         }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)
