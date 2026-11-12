@@ -144,7 +144,7 @@ def make_parser():
         "--interval-ms",
         type=int,
         default=1000,
-        help="Intervalo de recolha em milissegundos (mínimo: 1000).",
+        help="Intervalo de recolha em milissegundos (mínimo: 100; por omissão: 1000).",
     )
     live_dashboard.add_argument(
         "--timeout",
