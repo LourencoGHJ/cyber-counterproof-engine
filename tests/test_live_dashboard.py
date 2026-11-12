@@ -272,6 +272,8 @@ def test_live_state_accepts_millisecond_polling_but_rejects_under_100ms():
     assert state.interval_ms == 100
     with pytest.raises(ValueError, match="100 ms"):
         LiveState(FakeCollector(), interval_seconds=0.05)
+    with pytest.raises(ValueError, match="60000 ms"):
+        LiveState(FakeCollector(), interval_seconds=60.1)
 
 
 def test_remote_access_requires_authentication_and_trusted_transport():
