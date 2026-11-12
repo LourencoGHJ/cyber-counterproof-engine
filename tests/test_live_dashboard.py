@@ -267,9 +267,11 @@ def test_live_collector_rejects_invalid_policy(tmp_path):
         LiveSnapshotCollector(str(policy_path))
 
 
-def test_live_state_enforces_minimum_poll_interval():
-    with pytest.raises(ValueError, match="mínimo"):
-        LiveState(FakeCollector(), interval_seconds=0.5)
+def test_live_state_accepts_millisecond_polling_but_rejects_under_100ms():
+    state = LiveState(FakeCollector(), interval_seconds=0.1)
+    assert state.interval_ms == 100
+    with pytest.raises(ValueError, match="100 ms"):
+        LiveState(FakeCollector(), interval_seconds=0.05)
 
 
 def test_remote_access_requires_authentication_and_trusted_transport():
@@ -396,13 +398,13 @@ def test_cli_exposes_live_dashboard_with_millisecond_interval():
             "serve-dashboard",
             "--policy", "config/policy.json",
             "--source", "auto",
-            "--interval-ms", "1000",
+            "--interval-ms", "250",
             "--sudo-readonly",
         ]
     )
 
     assert args.command == "serve-dashboard"
-    assert args.interval_ms == 1000
+    assert args.interval_ms == 250
     assert args.source == "auto"
     assert args.host == "127.0.0.1"
     assert args.sudo_readonly is True
@@ -438,6 +440,128 @@ def test_sse_endpoint_streams_json_updates():
             event = json.loads(data_line)
             assert event["status"] == "DRIFT"
             assert event["sequence"] >= 1
+    finally:
+        state.stop()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+
+
+class MutableCollector:
+    requested_source = "test"
+
+    def __init__(self):
+        self.status = "PASS"
+        self.calls = 0
+
+    def collect(self):
+        self.calls += 1
+        return {
+            "updated_at_utc": f"check-{self.calls}",
+            "status": self.status,
+            "source": "test",
+            "scope": "test_scope",
+            "partial": False,
+            "warnings": [],
+            "summary": {"rules_total": 2},
+            "findings": [],
+            "limitations": [],
+            "evidence": {"snapshot": {"sha256": "same-hash"}},
+            "collection_duration_ms": 2.0 + self.calls,
+        }
+
+
+def test_live_state_deduplicates_unchanged_snapshots_and_publishes_real_changes():
+    collector = MutableCollector()
+    state = LiveState(collector, interval_seconds=0.1)
+    state.start()
+    try:
+        sequence, first = state.wait_for_update(0, timeout=1.0)
+        assert sequence == 1
+        assert first is not None
+        assert first["status"] == "PASS"
+        assert first["data_changed"] is True
+
+        time.sleep(0.25)
+        snapshot = state.snapshot()
+        assert snapshot["sequence"] == 1
+        assert snapshot["data_changed"] is False
+        assert snapshot["last_checked_at_utc"] is not None
+        assert snapshot["last_changed_at_utc"] == first["last_changed_at_utc"]
+        assert snapshot["last_collection_duration_ms"] >= 0
+
+        collector.status = "DRIFT"
+        sequence, changed = state.wait_for_update(1, timeout=1.0)
+        assert sequence == 2
+        assert changed is not None
+        assert changed["status"] == "DRIFT"
+        assert changed["data_changed"] is True
+        assert changed["last_changed_at_utc"] != first["last_changed_at_utc"]
+    finally:
+        state.stop()
+
+
+def test_live_state_heartbeat_reports_freshness_without_new_finding_event():
+    collector = MutableCollector()
+    state = LiveState(collector, interval_seconds=0.1)
+    state.start()
+    try:
+        sequence, _ = state.wait_for_update(0, timeout=1.0)
+        assert sequence == 1
+        time.sleep(0.15)
+        heartbeat = state.heartbeat()
+        assert heartbeat["sequence"] == 1
+        assert heartbeat["last_checked_at_utc"] is not None
+        assert heartbeat["last_collection_duration_ms"] >= 0
+        assert heartbeat["interval_ms"] == 100
+        assert state.snapshot()["sequence"] == 1
+    finally:
+        state.stop()
+
+
+def test_sse_stream_publishes_only_changed_data_and_sends_heartbeats():
+    collector = MutableCollector()
+    state = LiveState(collector, interval_seconds=0.1)
+    server = create_dashboard_server("127.0.0.1", 0, state)
+    worker = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.02},
+        daemon=True,
+    )
+    state.start()
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while state.snapshot()["sequence"] < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        address, port = server.server_address[:2]
+        with urlopen(f"http://{address}:{port}/events", timeout=3) as response:
+            assert response.headers["Content-Type"].startswith("text/event-stream")
+            first_event = ""
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                line = response.readline().decode("utf-8").strip()
+                if line.startswith("data: "):
+                    first_event = line[6:]
+                    break
+            assert first_event
+            first = json.loads(first_event)
+            assert first["sequence"] == 1
+            assert first["status"] == "PASS"
+
+            collector.status = "DRIFT"
+            second_event = ""
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                line = response.readline().decode("utf-8").strip()
+                if line.startswith("data: "):
+                    second_event = line[6:]
+                    break
+            assert second_event
+            second = json.loads(second_event)
+            assert second["sequence"] == 2
+            assert second["status"] == "DRIFT"
     finally:
         state.stop()
         server.shutdown()
