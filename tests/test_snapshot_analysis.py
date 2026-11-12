@@ -82,6 +82,7 @@ def test_malformed_snapshot_skips_semantic_analyses():
     assert family["rule_ir"]["analysis_status"] == "unavailable"
     assert family["risk_indicators"]["analysis_status"] == "skipped"
     assert family["rule_conflicts"]["analysis_status"] == "skipped"
+    assert family["chain_flow"]["analysis_status"] == "skipped"
     assert family["risk_indicators"]["candidates"] == []
     assert family["rule_conflicts"]["findings"] == []
 
@@ -134,3 +135,4 @@ def test_cli_writes_consolidated_report_and_returns_inconclusive(
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["operation"] == "analyze_snapshot"
     assert report["summary"]["families_analyzed"] == 1
+    assert report["families"][0]["chain_flow"]["analysis_status"] == "completed"

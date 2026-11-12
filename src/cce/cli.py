@@ -31,6 +31,7 @@ from cce.packet_cli import (
     run_packet_scenarios,
 )
 from cce.policy_conflicts import analyze_iptables_rule_conflicts
+from cce.iptables_chain_flow import analyze_iptables_chain_flow
 
 
 def make_parser():
@@ -143,6 +144,18 @@ def make_parser():
     )
     snapshot_analysis.add_argument("--output", required=True)
 
+    chain_flow = subs.add_parser(
+        "analyze-chain-flow",
+        help="Analisar referências, alcançabilidade estrutural e ciclos entre chains iptables.",
+    )
+    chain_flow.add_argument("--snapshot", required=True)
+    chain_flow.add_argument(
+        "--family",
+        required=True,
+        choices=("ipv4", "ipv6"),
+    )
+    chain_flow.add_argument("--output", required=True)
+
     conflicts = subs.add_parser(
         "analyze-rule-conflicts",
         help="Detetar regras redundantes, sombreadas e decisões sobrepostas.",
@@ -209,6 +222,42 @@ def main():
             if summary["rule_conflict_findings"]:
                 return 1
             return 3
+
+        if args.command == "analyze-chain-flow":
+            snapshot_path = Path(args.snapshot)
+            snapshot_text = snapshot_path.read_text(encoding="utf-8")
+            result = analyze_iptables_chain_flow(
+                snapshot_text,
+                args.family,
+            )
+            report = {
+                "schema_version": "1.0",
+                "engine": {
+                    "name": "Cyber Counterproof Engine",
+                    "version": "0.1.0",
+                },
+                "operation": "analyze_chain_flow",
+                "input_evidence": {
+                    "snapshot": {
+                        "path": str(snapshot_path),
+                        "sha256": sha256_file(snapshot_path),
+                    }
+                },
+                "result": result,
+            }
+            write_json_report(report, args.output)
+            summary = result["summary"]
+            print(
+                f"CCE: CHAIN_FLOW | Chains: {summary['chains_total']} | "
+                f"Reachable: {summary['structurally_reachable_chains_total']} | "
+                f"Referências: {summary['chain_references_total']} | "
+                f"Ciclos potenciais: {summary['cyclic_components_total']} | "
+                f"Chains sem caminho: {summary['structurally_unreachable_user_chains']}"
+            )
+            print(f"Relatório: {args.output}")
+            if result["analysis_status"] == "partial":
+                return 3
+            return 1 if summary["findings_total"] else 0
 
         if args.command == "analyze-rule-conflicts":
             snapshot_path = Path(args.snapshot)
@@ -606,7 +655,7 @@ def main():
     except ValueError as exc:
         if args.command not in {
             "compare-policy", "compare-live", "compare-iptables-save",
-            "analyze-rule-conflicts", "analyze-snapshot", "monitor", "dashboard"
+            "analyze-rule-conflicts", "analyze-snapshot", "analyze-chain-flow", "monitor", "dashboard"
         }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)

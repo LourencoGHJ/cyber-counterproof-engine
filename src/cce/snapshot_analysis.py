@@ -13,6 +13,7 @@ from cce.iptables_ir import SCHEMA_VERSION, parse_iptables_rules_ir
 from cce.iptables_risk import find_ssh_rule_candidates
 from cce.iptables_save import parse_iptables_save
 from cce.policy_conflicts import analyze_iptables_rule_conflicts
+from cce.iptables_chain_flow import analyze_iptables_chain_flow
 
 
 ENGINE_NAME = "Cyber Counterproof Engine"
@@ -99,6 +100,9 @@ def _analyse_family(
     }
 
     if has_malformed_lines:
+        chain_flow_report = _skipped_analysis(
+            "O snapshot contém linhas estruturalmente malformadas; a análise de fluxo estrutural foi omitida."
+        )
         ir_report = _unavailable_ir_summary(structural_summary["rules_total"])
         skip_reason = (
             "O snapshot contém linhas estruturalmente malformadas; as análises "
@@ -111,6 +115,16 @@ def _analyse_family(
         }
         conflict_report = _skipped_analysis(skip_reason)
     else:
+        try:
+            chain_flow_report = analyze_iptables_chain_flow(
+                snapshot_text,
+                family,
+            )
+        except ValueError:
+            chain_flow_report = _skipped_analysis(
+                "A análise estrutural do fluxo entre chains não pôde ser concluída."
+            )
+
         try:
             ir_report = _build_ir_summary(snapshot_text, family)
         except ValueError:
@@ -156,6 +170,7 @@ def _analyse_family(
         "rule_ir": ir_report,
         "risk_indicators": risk_report,
         "rule_conflicts": conflict_report,
+        "chain_flow": chain_flow_report,
     }
 
 
@@ -215,6 +230,10 @@ def analyze_firewall_snapshots(
         "rule_conflict_findings": 0,
         "proven_rule_conflict_findings": 0,
         "potential_rule_conflict_findings": 0,
+        "chain_flow_findings": 0,
+        "potential_chain_cycles": 0,
+        "structurally_unreachable_user_chains": 0,
+        "unresolved_chain_targets": 0,
     }
     findings: list[dict[str, Any]] = []
 
@@ -223,6 +242,9 @@ def analyze_firewall_snapshots(
         structural_summary = family_result["structural_analysis"]["summary"]
         ir_summary = family_result["rule_ir"]["summary"]
         conflict_findings = family_result["rule_conflicts"]["findings"]
+        chain_flow = family_result["chain_flow"]
+        chain_flow_summary = chain_flow["summary"] if chain_flow["summary"] else {}
+        chain_flow_findings = chain_flow["findings"]
         candidates = family_result["risk_indicators"]["candidates"]
 
         summary["tables_total"] += structural_summary["tables_total"]
@@ -238,6 +260,16 @@ def analyze_firewall_snapshots(
         summary["rules_ir_unparsed"] += ir_summary["rules_unparsed"]
         summary["ssh_rule_candidates"] += len(candidates)
         summary["rule_conflict_findings"] += len(conflict_findings)
+        summary["chain_flow_findings"] += len(chain_flow_findings)
+        summary["potential_chain_cycles"] += chain_flow_summary.get(
+            "cyclic_components_total", 0
+        )
+        summary["structurally_unreachable_user_chains"] += chain_flow_summary.get(
+            "structurally_unreachable_user_chains", 0
+        )
+        summary["unresolved_chain_targets"] += chain_flow_summary.get(
+            "unresolved_targets_total", 0
+        )
 
         for finding in conflict_findings:
             certainty = finding.get("certainty")
@@ -252,6 +284,10 @@ def analyze_firewall_snapshots(
         findings.extend(
             {"category": "ssh_rule_candidate", **candidate}
             for candidate in candidates
+        )
+        findings.extend(
+            {"category": "chain_flow", "family": family, **finding}
+            for finding in chain_flow_findings
         )
 
     return {
@@ -273,6 +309,7 @@ def analyze_firewall_snapshots(
             "Famílias de endereços não fornecidas não foram avaliadas.",
             "A IR só normaliza condições conhecidas; regras parciais não são tratadas como totalmente interpretadas.",
             "A análise de conflitos cobre regras terminais totalmente interpretadas na mesma cadeia da tabela filter.",
+            "A análise de fluxo entre chains é estrutural e não avalia a correspondência dos seletores nem prova ciclos executáveis por pacotes.",
             "Indicadores SSH são heurísticos e não provam exposição externa, acessibilidade ou estado do serviço.",
             "Não são simulados NAT, routing, módulos não suportados ou alterações dinâmicas do ruleset.",
             "Nenhuma regra da firewall é aplicada, removida ou modificada.",
