@@ -344,6 +344,7 @@ class LiveState:
     """Partilha alterações de estado e medições de recolha entre HTTP/SSE."""
 
     MIN_INTERVAL_SECONDS = 0.1
+    MAX_INTERVAL_SECONDS = 60.0
 
     def __init__(
         self,
@@ -355,6 +356,8 @@ class LiveState:
                 "O intervalo mínimo é 100 ms. Intervalos inferiores aumentam "
                 "a carga e não garantem menor latência real."
             )
+        if interval_seconds > self.MAX_INTERVAL_SECONDS:
+            raise ValueError("O intervalo máximo é 60000 ms.")
         self.collector = collector
         self.interval_seconds = interval_seconds
         self.interval_ms = round(interval_seconds * 1000)
@@ -420,6 +423,7 @@ class LiveState:
                 ),
                 "last_cycle_duration_ms": self.current.get("last_cycle_duration_ms"),
                 "interval_ms": self.interval_ms,
+                "scope": self.current.get("scope"),
             }
 
     def wait_for_update(
@@ -722,7 +726,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
         setText("duration", heartbeat.last_collection_duration_ms);
       }
       if (heartbeat.last_cycle_duration_ms !== undefined) {
-        setText("coverage", "Intervalo: " + heartbeat.interval_ms + " ms · Ciclo: " + heartbeat.last_cycle_duration_ms + " ms");
+        setText("coverage", (heartbeat.scope ? "Âmbito: " + heartbeat.scope + " · " : "") + "Intervalo: " + heartbeat.interval_ms + " ms · Ciclo: " + heartbeat.last_cycle_duration_ms + " ms");
       }
     } catch (_) {
       connection.textContent = "Heartbeat inválido";
