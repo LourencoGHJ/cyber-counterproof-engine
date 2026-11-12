@@ -813,9 +813,14 @@ def serve_live_dashboard(
     allow_remote: bool = False,
     token_env: str = "CCE_DASHBOARD_TOKEN",
     trusted_transport: bool = False,
+    timeout_seconds: float = 8.0,
 ) -> None:
     """Inicia o recolhedor read-only e o servidor HTTP/SSE."""
-    collector = LiveSnapshotCollector(policy_path, source=source)
+    collector = LiveSnapshotCollector(
+        policy_path,
+        source=source,
+        timeout_seconds=timeout_seconds,
+    )
     token = os.environ.get(token_env)
     state = LiveState(collector, interval_seconds)
     server = create_dashboard_server(
