@@ -431,7 +431,7 @@ h2{font-size:16px;font-weight:650;margin:0 0 12px}
 .badge-ERROR{background:#fbeaec;color:#982f35}.badge-INCONCLUSIVE{background:#f0ecf8;color:#59468a}
 .description{font-size:13px;color:#4f5c69}
 .meta{margin-left:auto;font-size:11px;color:#697583}
-.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid #dce2e8;background:#fff;border-radius:4px}
+.metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid #dce2e8;background:#fff;border-radius:4px}
 .metric{padding:14px 15px;border-right:1px solid #e5e9ed}.metric:last-child{border:0}
 .label{display:block;font-size:11px;color:#657180}.value{display:block;font-size:22px;font-weight:650;margin-top:7px;font-variant-numeric:tabular-nums}
 .panel{border:1px solid #dce2e8;background:#fff;border-radius:4px;padding:15px 16px}
@@ -533,7 +533,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
       const row = document.createElement("tr");
       cell(row, "Não foram registadas descobertas nesta recolha.");
       const td = row.firstElementChild;
-      td.colSpan = 6;
+      td.colSpan = 7;
       td.className = "muted";
       body.appendChild(row);
       return;
@@ -694,6 +694,7 @@ def create_dashboard_server(
     class DashboardHandler(BaseHTTPRequestHandler):
         server_version = "CCE-Dashboard"
         sys_version = ""
+        protocol_version = "HTTP/1.1"
 
         def _authorised(self) -> bool:
             if not require_auth:
@@ -760,6 +761,7 @@ def create_dashboard_server(
                 self._headers("text/event-stream; charset=utf-8")
                 self.send_header("Connection", "keep-alive")
                 self.end_headers()
+                self.connection.settimeout(30)
                 sequence = -1
                 try:
                     while not state.stop_event.is_set():
