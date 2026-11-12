@@ -76,20 +76,24 @@ Generate the local security operations dashboard from monitoring history:
 
 The dashboard is a simple, responsive HTML report with the latest assessment, counts for PASS/DRIFT/INCONCLUSIVE/ERROR, findings from the latest run, and a searchable, filterable, sortable table of recent executions. Execution details can be expanded, and the report can be printed. It uses only data present in the JSON history, has no external assets, and does not present itself as a live firewall or host-monitoring console.
 
-Start the live firewall dashboard on a Linux host:
+Start the live firewall dashboard on the Linux host whose firewall is being inspected:
 
-    cce serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --interval-ms 1000
+    cce serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 1000
 
-Open **http://127.0.0.1:8765/** in a browser. The service recollects `iptables-save`, `ip6tables-save`, and `nft -j list ruleset` every second and pushes each completed analysis to connected browsers using Server-Sent Events. The page presents the current status, IPv4/IPv6 rule counts, nftables inventory, source availability, and findings. It contains no logo or decorative branding. Without `--policy`, the inventory is still shown but the global result remains `INCONCLUSIVE`.
+Open **http://127.0.0.1:8765/** in a browser. With `--source auto`, the collector reads `iptables-save`, `ip6tables-save`, and `nft -j list ruleset) using fixed read-only subprocess arguments. Completed analyses are pushed to connected browsers with Server-Sent Events (SSE); the page does not need to reload.
 
-The 1000 ms interval is a polling target, not a millisecond latency guarantee. Actual update time also includes command execution and analysis. The server is read-only and exposes GET endpoints only; it does not modify firewall rules. The API does not publish raw rule text or IP/port selectors.
+The dashboard presents the latest status, separate iptables/nftables counts, findings, collection duration, source availability, and analysis limitations. The iptables adapter uses the CCE semantic snapshot analysis. The nftables adapter currently compares base-chain policies and structural inventory; it does not claim full nftables rule-semantic coverage. Results from the two sources are kept separate because an iptables-nft compatibility ruleset may overlap with native nftables rules.
 
-The collector must run on the Linux machine whose firewall is being inspected, with permission to execute the three read-only listing commands. Running the dashboard on Windows does not inspect a separate Linux firewall.
+The default polling target is 1000 ms. This is a one-second collection interval, not a guarantee of millisecond end-to-end latency: actual freshness includes command execution, parsing, analysis and browser delivery. The collector is read-only and runs GET-only HTTP endpoints; it does not apply or modify firewall rules. The API does not publish raw rule text or IP/port selectors.
 
-**Remote access:** keep the CCE service bound to `127.0.0.1` and expose it through a TLS reverse proxy or a private VPN. If binding to a non-loopback address, the service requires an environment variable (default: `CCE_DASHBOARD_PASSWORD`) containing at least 24 characters and uses HTTP Basic authentication. The built-in server does not provide TLS; never expose its plain HTTP port directly to the public Internet. For example, on a private VPN only:
+The service must run on the Linux machine whose firewall is being inspected, with permission to execute the selected listing commands. Running the dashboard on Windows does not inspect a separate Linux firewall. A Windows browser can view a Linux-hosted instance through a protected private network or HTTPS reverse proxy.
 
-    export CCE_DASHBOARD_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-    cce serve-dashboard --host 0.0.0.0 --port 8765 --policy config/policy.json
+**Remote access:** keep the service bound to `127.0.0.1` and expose it through a TLS reverse proxy or private VPN where possible. Direct non-loopback binding requires an explicit acknowledgement, a token of at least 32 characters, and a trusted VPN/HTTPS transport. Set the token in the environment; do not pass it as a command-line argument:
+
+    export CCE_DASHBOARD_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    cce serve-dashboard --policy config/policy.json --host 0.0.0.0 --port 8765 --source auto --interval-ms 1000 --allow-remote --trusted-transport
+
+Remote access uses HTTP Basic authentication (username `cce`, password from `CCE_DASHBOARD_TOKEN`). The built-in server does not provide TLS; never expose its plain HTTP port directly to the public Internet. Restrict access at the VPN or reverse proxy and keep the token secret.
 
 The static `cce dashboard` command remains intended for an exported historical HTML report; use `cce serve-dashboard` for live collection.
 
