@@ -383,7 +383,7 @@ class DashboardState:
         timeout: float = 15.0,
     ) -> tuple[int, dict[str, Any] | None]:
         with self._condition:
-            if self._version <= after_version:
+            if self._payload is None or self._version <= after_version:
                 self._condition.wait(timeout)
             return self._version, copy.deepcopy(self._payload)
 
@@ -659,6 +659,7 @@ def _make_handler(
         expected_authorisation = "Basic " + token
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
         server_version = "CCE"
         sys_version = ""
 
@@ -847,6 +848,5 @@ def serve_live_dashboard(
         pass
     finally:
         stop_event.set()
-        server.shutdown()
         server.server_close()
         collector.join(timeout=timeout_seconds + 1)
