@@ -215,7 +215,9 @@ def main():
                 f"Cadeias: {summary['chains_total']} | "
                 f"Regras: {summary['rules_total']} | "
                 f"Conflitos: {summary['rule_conflict_findings']} | "
-                f"Candidatos SSH: {summary['ssh_rule_candidates']}"
+                f"Candidatos SSH: {summary['ssh_rule_candidates']} | "
+                f"Ciclos potenciais: {summary['potential_chain_cycles']} | "
+                f"Chains sem caminho: {summary['structurally_unreachable_user_chains']}"
             )
             print(f"Relatório: {args.output}")
 
