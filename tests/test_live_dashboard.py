@@ -550,6 +550,21 @@ def test_sse_stream_publishes_only_changed_data_and_sends_heartbeats():
             assert first["sequence"] == 1
             assert first["status"] == "PASS"
 
+            heartbeat_event = False
+            heartbeat_payload = None
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                line = response.readline().decode("utf-8").strip()
+                if line == "event: heartbeat":
+                    heartbeat_event = True
+                elif heartbeat_event and line.startswith("data: "):
+                    heartbeat_payload = json.loads(line[6:])
+                    break
+            assert heartbeat_event
+            assert heartbeat_payload is not None
+            assert heartbeat_payload["sequence"] == 1
+            assert heartbeat_payload["last_checked_at_utc"] is not None
+
             collector.status = "DRIFT"
             second_event = ""
             deadline = time.monotonic() + 2
