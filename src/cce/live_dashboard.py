@@ -1,4 +1,4 @@
-"""Read-only live firewall dashboard served over HTTP with Server-Sent Events."""
+"""Dashboard de firewall com atualização contínua e recolha read-only."""
 
 from __future__ import annotations
 
@@ -13,647 +13,565 @@ import shutil
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
 from cce.live import analyze_live_ruleset
+from cce.models import load_json, validate_policy
 from cce.snapshot_analysis import analyze_firewall_snapshots
-
-
-MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
-DEFAULT_INTERVAL_MS = 1000
-DEFAULT_TIMEOUT_SECONDS = 5
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _is_loopback_host(host: str) -> bool:
-    if host.strip().lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def validate_server_security(
-    host: str,
-    username: str,
-    password: str | None,
-) -> None:
-    """Require strong HTTP Basic credentials for non-loopback listeners."""
-    if not username or ":" in username or any(char in username for char in "\r\n"):
-        raise ValueError("O utilizador HTTP tem um formato inválido.")
+def _public_findings(values: Any) -> list[dict[str, Any]]:
+    """Constrói uma lista limitada de findings sem divulgar regras ou seletores."""
+    if not isinstance(values, list):
+        return []
 
-    if _is_loopback_host(host):
-        return
-
-    if not password or len(password) < 24:
-        raise ValueError(
-            "Para escutar numa interface de rede, define uma password com "
-            "pelo menos 24 caracteres na variável de ambiente configurada. "
-            "O acesso remoto deve ainda passar por VPN ou proxy HTTPS."
-        )
-
-
-def _safe_command_error(stderr: str, returncode: int | None = None) -> str:
-    lowered = stderr.lower()
-    if any(token in lowered for token in ("permission denied", "operation not permitted", "must be root")):
-        return "Permissões insuficientes para consultar esta fonte da firewall."
-    if returncode is not None:
-        return f"O comando terminou com código {returncode}."
-    return "Não foi possível executar o comando de recolha."
-
-
-def _run_read_only_command(
-    command_name: str,
-    arguments: tuple[str, ...],
-    timeout_seconds: float,
-) -> tuple[dict[str, Any], str | None]:
-    """Runs only fixed read-only firewall listing commands; never invokes a shell."""
-    executable = shutil.which(command_name)
-    if executable is None:
-        return (
-            {
-                "status": "UNAVAILABLE",
-                "message": f"{command_name} não está instalado.",
-            },
-            None,
-        )
-
-    try:
-        result = subprocess.run(
-            [executable, *arguments],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-            check=False,
-            shell=False,
-        )
-    except subprocess.TimeoutExpired:
-        return (
-            {
-                "status": "ERROR",
-                "message": f"{command_name} excedeu o limite de {timeout_seconds:g}s.",
-            },
-            None,
-        )
-    except OSError:
-        return (
-            {
-                "status": "ERROR",
-                "message": f"Não foi possível executar {command_name}.",
-            },
-            None,
-        )
-
-    if result.returncode != 0:
-        return (
-            {
-                "status": "ERROR",
-                "message": _safe_command_error(result.stderr, result.returncode),
-                "exit_code": result.returncode,
-            },
-            None,
-        )
-
-    output = result.stdout
-    encoded = output.encode("utf-8")
-    if not output.strip():
-        return (
-            {
-                "status": "ERROR",
-                "message": f"{command_name} não devolveu dados.",
-                "exit_code": result.returncode,
-            },
-            None,
-        )
-    if len(encoded) > MAX_SNAPSHOT_BYTES:
-        return (
-            {
-                "status": "ERROR",
-                "message": f"A saída de {command_name} excedeu o limite de segurança.",
-                "bytes": len(encoded),
-            },
-            None,
-        )
-
-    return (
-        {
-            "status": "AVAILABLE",
-            "message": "Leitura concluída.",
-            "bytes": len(encoded),
-            "sha256": hashlib.sha256(encoded).hexdigest(),
-            "exit_code": result.returncode,
-        },
-        output,
+    allowed = (
+        "code",
+        "category",
+        "policy_category",
+        "status",
+        "severity",
+        "family",
+        "table",
+        "chain",
+        "hook",
+        "rule_id",
+        "observed_lines",
+        "impact",
+        "reason",
+        "detail",
+        "expected",
+        "observed",
     )
-
-
-def _nft_inventory(snapshot: dict[str, Any]) -> dict[str, int]:
-    elements = snapshot["nftables"]
-    tables = chains = rules = 0
-    for element in elements:
-        if not isinstance(element, dict):
-            continue
-        if "table" in element:
-            tables += 1
-        elif "chain" in element:
-            chains += 1
-        elif "rule" in element:
-            rules += 1
-    return {"tables": tables, "chains": chains, "rules": rules}
-
-
-def _normalise_findings(findings: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
-    normalised: list[dict[str, Any]] = []
-    for item in findings:
+    result: list[dict[str, Any]] = []
+    for item in values[:200]:
         if not isinstance(item, dict):
             continue
-        normalised.append(
+        result.append(
             {
-                "source": source,
-                "category": item.get("category", source),
-                "code": item.get("code", item.get("id", item.get("status", "FINDING"))),
-                "status": item.get("status", "FINDING"),
-                "severity": item.get("severity", "—"),
-                "family": item.get("family", "—"),
-                "chain": item.get("chain", "—"),
-                "rule_id": item.get("rule_id", item.get("rule", "—")),
-                "observed_lines": item.get("observed_lines", []),
-                "description": (
-                    item.get("reason")
-                    or item.get("detail")
-                    or item.get("message")
-                    or item.get("impact")
-                    or "Foi identificada uma condição que requer revisão."
-                ),
+                key: item[key]
+                for key in allowed
+                if key in item
+                and isinstance(item[key], (str, int, float, bool, list, type(None)))
             }
         )
-    return normalised
+    return result
 
 
-def collect_live_state(
-    policy: dict[str, Any] | None = None,
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-    interval_ms: int = DEFAULT_INTERVAL_MS,
-) -> dict[str, Any]:
-    """Collects current firewall snapshots and returns a redacted analysis payload."""
-    started = time.monotonic()
-    sources: dict[str, dict[str, Any]] = {}
-    snapshots: dict[str, dict[str, str]] = {}
+class LiveSnapshotCollector:
+    """Recolhe snapshots de firewall através de comandos fixos e read-only."""
 
-    # Run the three fixed read-only listing commands concurrently so one
-    # slow firewall frontend does not unnecessarily delay the other sources.
-    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="cce-live-source") as pool:
-        futures = {
-            "ipv4": pool.submit(
-                _run_read_only_command, "iptables-save", (), timeout_seconds
-            ),
-            "ipv6": pool.submit(
-                _run_read_only_command, "ip6tables-save", (), timeout_seconds
-            ),
-            "nftables": pool.submit(
-                _run_read_only_command,
-                "nft",
-                ("-j", "list", "ruleset"),
-                timeout_seconds,
-            ),
-        }
-        source_results = {
-            name: future.result()
-            for name, future in futures.items()
-        }
-
-    for family, command in (
-        ("ipv4", "iptables-save"),
-        ("ipv6", "ip6tables-save"),
-    ):
-        metadata, output = source_results[family]
-        sources[family] = {"label": f"{command} ({family.upper()})", **metadata}
-        if output is not None:
-            snapshots[family] = {
-                "path": f"live:{command}",
-                "sha256": metadata["sha256"],
-                "text": output,
-            }
-
-    nft_metadata, nft_output = source_results["nftables"]
-    sources["nftables"] = {"label": "nft -j list ruleset", **nft_metadata}
-
-    nft_snapshot: dict[str, Any] | None = None
-    nft_analysis: dict[str, Any] | None = None
-    nft_inventory = {"tables": 0, "chains": 0, "rules": 0}
-    if nft_output is not None:
-        try:
-            parsed = json.loads(nft_output)
-            if not isinstance(parsed, dict) or not isinstance(parsed.get("nftables"), list):
-                raise ValueError("O JSON nftables não contém uma lista nftables válida.")
-            nft_snapshot = parsed
-            nft_inventory = _nft_inventory(parsed)
-        except (json.JSONDecodeError, ValueError):
-            sources["nftables"]["status"] = "ERROR"
-            sources["nftables"]["message"] = "A saída JSON de nftables é inválida."
-
-    iptables_report: dict[str, Any] | None = None
-    analysis_errors: list[str] = []
-    if snapshots:
-        try:
-            iptables_report = analyze_firewall_snapshots(snapshots, policy=policy)
-        except (ValueError, TypeError):
-            analysis_errors.append("A análise dos snapshots iptables não pôde ser concluída.")
-
-    if nft_snapshot is not None and policy is not None:
-        try:
-            nft_analysis = analyze_live_ruleset(policy, nft_snapshot)
-        except (ValueError, TypeError):
-            analysis_errors.append("A análise das base chains nftables não pôde ser concluída.")
-
-    iptables_summary = (
-        iptables_report.get("summary", {}) if iptables_report is not None else {}
-    )
-    families_summary: dict[str, dict[str, int]] = {}
-    if iptables_report is not None:
-        for family in iptables_report.get("families", []):
-            structural = family.get("structural_analysis", {}).get("summary", {})
-            families_summary[family.get("family", "unknown")] = {
-                "chains": int(structural.get("chains_total") or 0),
-                "rules": int(structural.get("rules_total") or 0),
-            }
-
-    findings: list[dict[str, Any]] = []
-    if iptables_report is not None:
-        findings.extend(_normalise_findings(iptables_report.get("findings", []), "iptables"))
-    if nft_analysis is not None:
-        findings.extend(_normalise_findings(nft_analysis.get("findings", []), "nftables"))
-    findings = findings[:100]
-
-    available_sources = sum(
-        source.get("status") == "AVAILABLE" for source in sources.values()
-    )
-    source_errors = sum(
-        source.get("status") == "ERROR" for source in sources.values()
-    )
-
-    analysis_statuses = []
-    if iptables_report is not None:
-        analysis_statuses.append(iptables_report.get("status", "INCONCLUSIVE"))
-    if nft_analysis is not None:
-        analysis_statuses.append(nft_analysis.get("status", "INCONCLUSIVE"))
-
-    if not available_sources:
-        overall_status = "ERROR"
-    elif "DRIFT" in analysis_statuses:
-        overall_status = "DRIFT"
-    else:
-        overall_status = "INCONCLUSIVE"
-
-    summary = {
-        "iptables_families": len(families_summary),
-        "ipv4_chains": families_summary.get("ipv4", {}).get("chains", 0),
-        "ipv4_rules": families_summary.get("ipv4", {}).get("rules", 0),
-        "ipv6_chains": families_summary.get("ipv6", {}).get("chains", 0),
-        "ipv6_rules": families_summary.get("ipv6", {}).get("rules", 0),
-        "iptables_chains": int(iptables_summary.get("chains_total") or 0),
-        "iptables_rules": int(iptables_summary.get("rules_total") or 0),
-        "rule_conflicts": int(iptables_summary.get("rule_conflict_findings") or 0),
-        "ssh_candidates": int(iptables_summary.get("ssh_rule_candidates") or 0),
-        "chain_cycles": int(iptables_summary.get("potential_chain_cycles") or 0),
-        "policy_drifts": int(iptables_summary.get("policy_drift_findings") or 0),
-        "nft_tables": nft_inventory["tables"],
-        "nft_chains": nft_inventory["chains"],
-        "nft_rules": nft_inventory["rules"],
-        "findings": len(findings),
-        "sources_available": available_sources,
-        "sources_with_errors": source_errors,
-    }
-
-    duration_ms = round((time.monotonic() - started) * 1000, 2)
-    limitations = [
-        "A recolha é feita por polling; o ciclo nominal é de 1000 ms, mas o tempo real depende da execução dos comandos e da carga do sistema.",
-        "A leitura é estritamente read-only: são usados apenas iptables-save, ip6tables-save e nft -j list ruleset.",
-        "A análise nftables compara atualmente políticas das base chains; não interpreta todas as expressões individuais.",
-        "A análise iptables conserva as limitações documentadas do comparador e da avaliação de tráfego.",
-        "INCONCLUSIVE não significa que a firewall seja segura ou insegura.",
-    ]
-    if policy is None:
-        limitations.append("Não foi fornecida política de referência; não são calculados desvios face a uma baseline.")
-    if source_errors or analysis_errors:
-        limitations.append("Uma ou mais fontes não puderam ser consultadas ou analisadas nesta atualização.")
-
-    return {
-        "schema_version": "1.0",
-        "generated_at_utc": _utc_now(),
-        "collection_duration_ms": duration_ms,
-        "refresh_interval_ms": interval_ms,
-        "status": overall_status,
-        "read_only": True,
-        "summary": summary,
-        "sources": sources,
-        "iptables": {
-            "status": iptables_report.get("status") if iptables_report else "UNAVAILABLE",
-            "families": families_summary,
-            "summary": iptables_summary,
-        },
-        "nftables": {
-            "status": (
-                nft_analysis.get("status")
-                if nft_analysis
-                else ("AVAILABLE" if nft_snapshot is not None else sources["nftables"]["status"])
-            ),
-            "inventory": nft_inventory,
-            "analysis": nft_analysis,
-        },
-        "findings": findings,
-        "limitations": limitations,
-        "analysis_errors": analysis_errors,
-    }
-
-
-class DashboardState:
-    """Thread-safe latest-state store used by the SSE endpoint."""
-
-    def __init__(self) -> None:
-        self._condition = threading.Condition()
-        self._version = 0
-        self._payload: dict[str, Any] | None = None
-
-    def publish(self, payload: dict[str, Any]) -> int:
-        with self._condition:
-            self._version += 1
-            self._payload = copy.deepcopy(payload)
-            self._condition.notify_all()
-            return self._version
-
-    def snapshot(self) -> tuple[int, dict[str, Any] | None]:
-        with self._condition:
-            return self._version, copy.deepcopy(self._payload)
-
-    def wait_for_change(
+    def __init__(
         self,
-        after_version: int,
+        policy_path: str,
+        source: str = "auto",
+        timeout_seconds: float = 8.0,
+    ) -> None:
+        if source not in {"auto", "iptables", "nftables"}:
+            raise ValueError("source tem de ser auto, iptables ou nftables.")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds tem de ser superior a zero.")
+
+        self.policy_path = policy_path
+        self.policy = load_json(policy_path)
+        errors = validate_policy(self.policy)
+        if errors:
+            raise ValueError("Política inválida: " + "; ".join(errors))
+
+        self.requested_source = source
+        self.timeout_seconds = timeout_seconds
+
+    def _resolve_source(self) -> str:
+        if self.requested_source != "auto":
+            return self.requested_source
+        # Preferimos iptables-save quando está instalado porque a análise
+        # semântica do CCE para esta fonte é mais profunda. Caso contrário,
+        # usamos nftables com o âmbito atualmente suportado pelo adaptador live.
+        if shutil.which("iptables-save"):
+            return "iptables"
+        if shutil.which("nft"):
+            return "nftables"
+        raise RuntimeError(
+            "Não foi encontrado iptables-save nem nft. "
+            "Executa o serviço no host Linux que gere a firewall."
+        )
+
+    def _run_read_only(self, executable: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+        command = [executable, *args]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"A consulta {executable} excedeu {self.timeout_seconds:g} segundos."
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(f"Não foi possível executar {executable}: {exc}") from exc
+
+        if result.returncode != 0:
+            message = result.stderr.strip() or f"código de saída {result.returncode}"
+            if "operation not permitted" in message.lower() or "permission denied" in message.lower():
+                message += ". Verifica as permissões read-only necessárias no host Linux."
+            raise RuntimeError(f"{executable} falhou: {message}")
+        return result
+
+    def _collect_iptables(self) -> dict[str, Any]:
+        snapshots: dict[str, dict[str, str]] = {}
+        warnings: list[str] = []
+        commands = (
+            ("ipv4", "iptables-save"),
+            ("ipv6", "ip6tables-save"),
+        )
+
+        for family, binary in commands:
+            executable = shutil.which(binary)
+            if not executable:
+                warnings.append(f"{binary} não está instalado; {family} não foi recolhido.")
+                continue
+            try:
+                result = self._run_read_only(executable, [])
+            except RuntimeError as exc:
+                warnings.append(f"{family}: {exc}")
+                continue
+
+            raw = result.stdout
+            if not raw.strip():
+                warnings.append(f"{binary} devolveu um snapshot vazio.")
+                continue
+            snapshots[family] = {
+                "path": f"live://{binary}",
+                "sha256": _sha256(raw),
+                "text": raw,
+            }
+
+        if not snapshots:
+            raise RuntimeError(
+                "Não foi possível recolher snapshots iptables. "
+                + " ".join(warnings)
+            )
+
+        report = analyze_firewall_snapshots(snapshots, policy=self.policy)
+        status = report.get("status", "INCONCLUSIVE")
+        summary = report.get("summary", {})
+        if warnings and status != "DRIFT":
+            status = "INCONCLUSIVE"
+
+        limitations = list(report.get("limitations", []))
+        limitations.append(
+            "A fonte iptables-save pode não incluir regras nftables nativas "
+            "que não sejam expostas pela camada de compatibilidade iptables."
+        )
+        if warnings:
+            limitations.extend(warnings)
+
+        return {
+            "updated_at_utc": _utc_now(),
+            "status": status,
+            "source": "iptables-save",
+            "scope": "semantic_iptables_snapshot_analysis",
+            "partial": bool(warnings),
+            "warnings": warnings,
+            "summary": summary,
+            "findings": _public_findings(report.get("findings", [])),
+            "limitations": limitations,
+            "evidence": {
+                family: {
+                    "source": snapshots[family]["path"],
+                    "sha256": snapshots[family]["sha256"],
+                }
+                for family in snapshots
+            },
+        }
+
+    def _collect_nftables(self) -> dict[str, Any]:
+        executable = shutil.which("nft")
+        if not executable:
+            raise RuntimeError("Comando nft não encontrado no host Linux.")
+
+        result = self._run_read_only(executable, ["-j", "list", "ruleset"])
+        raw = result.stdout
+        try:
+            snapshot = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("nft devolveu JSON inválido.") from exc
+
+        analysis = analyze_live_ruleset(self.policy, snapshot)
+        return {
+            "updated_at_utc": _utc_now(),
+            "status": analysis.get("status", "INCONCLUSIVE"),
+            "source": "nftables",
+            "scope": analysis.get("scope", "base_chain_policies_only"),
+            "partial": True,
+            "warnings": [],
+            "summary": analysis.get("summary", {}),
+            "findings": _public_findings(analysis.get("findings", [])),
+            "limitations": list(analysis.get("limitations", [])),
+            "evidence": {"nftables": {"sha256": _sha256(raw)}},
+        }
+
+    def collect(self) -> dict[str, Any]:
+        """Executa uma recolha e devolve sempre um estado apresentável pelo UI."""
+        started = time.monotonic()
+        try:
+            source = self._resolve_source()
+            result = (
+                self._collect_iptables()
+                if source == "iptables"
+                else self._collect_nftables()
+            )
+        except Exception as exc:  # O serviço deve continuar a atualizar o estado de erro.
+            result = {
+                "updated_at_utc": _utc_now(),
+                "status": "ERROR",
+                "source": self.requested_source,
+                "scope": "collection_failed",
+                "partial": True,
+                "warnings": [],
+                "summary": {},
+                "findings": [],
+                "limitations": [
+                    "A recolha falhou; não é possível inferir o estado atual da firewall."
+                ],
+                "error": f"{type(exc).__name__}: {exc}",
+                "evidence": {},
+            }
+
+        result["collection_duration_ms"] = round(
+            (time.monotonic() - started) * 1000,
+            2,
+        )
+        return result
+
+
+class LiveState:
+    """Partilha snapshots entre o recolhedor e clientes HTTP/SSE."""
+
+    def __init__(
+        self,
+        collector: LiveSnapshotCollector,
+        interval_seconds: float,
+    ) -> None:
+        if interval_seconds < 1.0:
+            raise ValueError(
+                "O intervalo mínimo é 1 segundo para limitar a carga de recolha."
+            )
+        self.collector = collector
+        self.interval_seconds = interval_seconds
+        self.condition = threading.Condition()
+        self.stop_event = threading.Event()
+        self.sequence = 0
+        self.current: dict[str, Any] = {
+            "updated_at_utc": None,
+            "status": "STARTING",
+            "source": collector.requested_source,
+            "scope": "not_collected",
+            "partial": True,
+            "warnings": [],
+            "summary": {},
+            "findings": [],
+            "limitations": [],
+            "evidence": {},
+            "interval_seconds": interval_seconds,
+            "sequence": 0,
+        }
+        self.thread = threading.Thread(
+            target=self._run,
+            name="cce-firewall-collector",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        with self.condition:
+            self.condition.notify_all()
+        if self.thread.is_alive():
+            self.thread.join(timeout=5)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.condition:
+            value = copy.deepcopy(self.current)
+            value["sequence"] = self.sequence
+            value["interval_seconds"] = self.interval_seconds
+            return value
+
+    def wait_for_update(
+        self,
+        previous_sequence: int,
         timeout: float = 15.0,
     ) -> tuple[int, dict[str, Any] | None]:
-        with self._condition:
-            if self._payload is None or self._version <= after_version:
-                self._condition.wait(timeout)
-            return self._version, copy.deepcopy(self._payload)
+        with self.condition:
+            self.condition.wait_for(
+                lambda: self.sequence > previous_sequence or self.stop_event.is_set(),
+                timeout=timeout,
+            )
+            if self.sequence <= previous_sequence:
+                return self.sequence, None
+            return self.sequence, copy.deepcopy(self.current)
+
+    def _run(self) -> None:
+        while not self.stop_event.is_set():
+            started = time.monotonic()
+            result = self.collector.collect()
+            with self.condition:
+                self.sequence += 1
+                result["sequence"] = self.sequence
+                result["interval_seconds"] = self.interval_seconds
+                self.current = result
+                self.condition.notify_all()
+            elapsed = time.monotonic() - started
+            self.stop_event.wait(max(0.0, self.interval_seconds - elapsed))
 
 
-DASHBOARD_HTML = r"""<!doctype html>
+LIVE_HTML = r"""<!doctype html>
 <html lang="pt-PT">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>Estado da firewall</title>
+<title>Firewall — Estado em tempo real</title>
 <style>
-:root { font-family: Arial, Helvetica, sans-serif; color: #202833; background: #f4f6f8; }
-* { box-sizing: border-box; }
-body { margin: 0; color: #202833; background: #f4f6f8; }
-main { max-width: 1180px; margin: 0 auto; padding: 26px 24px 40px; }
-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid #d7dde4; }
-h1 { margin: 0 0 6px; font-size: 24px; font-weight: 650; }
-p { margin: 0; }
-.subtitle { color: #5f6b78; font-size: 13px; }
-.connection { text-align: right; color: #596675; font-size: 12px; }
-.connection strong { display: inline-flex; align-items: center; gap: 7px; color: #475565; font-weight: 600; }
-.dot { width: 8px; height: 8px; display: inline-block; border-radius: 50%; background: #9aa4af; }
-.dot.online { background: #23834c; }
-.dot.offline { background: #b54747; }
-section { margin-top: 23px; }
-h2 { margin: 0 0 11px; font-size: 15px; font-weight: 650; color: #293746; }
-.metrics { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; }
-.metric { background: #fff; border: 1px solid #dce2e8; border-radius: 4px; padding: 13px 15px; min-height: 79px; }
-.metric span { display: block; color: #687482; font-size: 11px; }
-.metric strong { display: block; margin-top: 7px; color: #202b37; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.panel { background: #fff; border: 1px solid #dce2e8; border-radius: 4px; padding: 15px 16px; }
-.status { display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; }
-.status-PASS, .status-AVAILABLE { background: #e7f2ea; color: #216342; }
-.status-DRIFT { background: #fff0d5; color: #855500; }
-.status-INCONCLUSIVE { background: #f0ecf8; color: #59468a; }
-.status-ERROR, .status-UNAVAILABLE { background: #fbeaec; color: #982f35; }
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th { background: #f7f8fa; color: #5c6876; text-align: left; font-size: 11px; font-weight: 650; }
-th, td { padding: 10px 11px; vertical-align: top; border-bottom: 1px solid #e8ebef; }
-tbody tr:last-child td { border-bottom: 0; }
-td { color: #344150; line-height: 1.45; }
-.muted { color: #6b7785; font-size: 11px; }
-.small { font-size: 11px; }
-.finding-description { display: block; margin-top: 4px; color: #697583; }
-.empty { color: #697583; font-size: 12px; padding: 12px 0; }
-.error-note { color: #923a3e; }
-.meta { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; color: #687482; font-size: 11px; }
-.meta span { white-space: nowrap; }
-footer { margin-top: 22px; padding-top: 12px; border-top: 1px solid #d7dde4; color: #77828e; font-size: 11px; line-height: 1.5; }
-@media (max-width: 780px) {
-  main { padding: 20px 13px 30px; }
-  header { flex-direction: column; gap: 12px; }
-  .connection { text-align: left; }
-  .metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .metric:last-child { grid-column: 1 / -1; }
-}
+:root{font-family:Arial,Helvetica,sans-serif;color:#202833;background:#f3f5f7}
+*{box-sizing:border-box}
+body{margin:0;background:#f3f5f7;color:#202833}
+main{max-width:1120px;margin:0 auto;padding:28px 24px 42px}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding-bottom:18px;border-bottom:1px solid #d9dee5}
+h1{font-size:25px;font-weight:650;margin:0 0 6px}
+p{line-height:1.5}
+.subtitle{margin:0;color:#637080;font-size:13px}
+.connection{font-size:12px;color:#566473;white-space:nowrap;padding-top:5px}
+.connection::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#c48b2d;margin-right:7px}
+.connection.connected::before{background:#2d8a58}
+.connection.disconnected::before{background:#c13c48}
+section{margin-top:24px}
+h2{font-size:16px;font-weight:650;margin:0 0 12px}
+.summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#fff;border:1px solid #dce2e8;border-radius:4px;padding:15px 17px}
+.badge{display:inline-block;border-radius:3px;padding:5px 8px;font-size:11px;font-weight:700;background:#edf0f2;color:#4c5968}
+.badge-PASS{background:#e8f3ec;color:#216342}.badge-DRIFT{background:#fff2d8;color:#855500}
+.badge-ERROR{background:#fbeaec;color:#982f35}.badge-INCONCLUSIVE{background:#f0ecf8;color:#59468a}
+.description{font-size:13px;color:#4f5c69}
+.meta{margin-left:auto;font-size:11px;color:#697583}
+.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid #dce2e8;background:#fff;border-radius:4px}
+.metric{padding:14px 15px;border-right:1px solid #e5e9ed}.metric:last-child{border:0}
+.label{display:block;font-size:11px;color:#657180}.value{display:block;font-size:22px;font-weight:650;margin-top:7px;font-variant-numeric:tabular-nums}
+.panel{border:1px solid #dce2e8;background:#fff;border-radius:4px;padding:15px 16px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:10px;color:#586675;background:#f7f8fa;border-bottom:1px solid #dce2e8;font-size:11px}
+td{padding:10px;vertical-align:top;border-bottom:1px solid #e8ebef;line-height:1.45;color:#354150}
+tbody tr:last-child td{border-bottom:0}
+code{font-family:Consolas,'Courier New',monospace;font-size:11px;color:#315474}
+.muted{color:#697583;font-size:12px}
+.warning{margin-top:10px;padding:10px 12px;border:1px solid #ecd7a9;background:#fff9eb;color:#77571e;font-size:12px;border-radius:3px}
+.empty{padding:15px 0;color:#697583;font-size:13px}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#75808c;font-size:11px;line-height:1.5}
+@media(max-width:700px){main{padding:20px 13px 30px}header{flex-direction:column;gap:7px}h1{font-size:22px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.metric{border-bottom:1px solid #e5e9ed}.metric:nth-child(2n){border-right:0}.metric:last-child{grid-column:1/-1;border:0}.meta{margin-left:0;width:100%}table{min-width:650px}}
+@media print{body{background:#fff}main{max-width:none;padding:0}.connection{display:none}.panel,.summary,.metrics{break-inside:avoid}}
 </style>
 </head>
 <body>
 <main>
 <header>
-  <div><h1>Estado da firewall</h1><p class="subtitle">Análise atual das regras e políticas observadas no sistema.</p></div>
-  <div class="connection"><strong><i id="connection-dot" class="dot"></i><span id="connection-text">A ligar ao serviço…</span></strong><p id="updated-at" class="muted">À espera da primeira recolha</p></div>
+  <div><h1>Estado da firewall</h1><p class="subtitle">Auditoria read-only · atualizações automáticas</p></div>
+  <div id="connection" class="connection">A ligar ao serviço…</div>
 </header>
-
 <section>
   <h2>Estado atual</h2>
-  <div class="panel">
-    <span id="overall-status" class="status status-INCONCLUSIVE">A recolher</span>
-    <div class="meta"><span id="collection-time">Tempo de recolha: —</span><span id="refresh-rate">Intervalo: —</span><span id="readonly">Modo read-only</span></div>
-    <p id="global-note" class="muted" style="margin-top:10px">A primeira leitura será apresentada quando terminar.</p>
+  <div class="summary">
+    <span id="status" class="badge">STARTING</span>
+    <span id="description" class="description">A aguardar a primeira recolha.</span>
+    <span id="updated" class="meta">Ainda sem atualização</span>
   </div>
+  <div id="warnings"></div>
 </section>
-
 <section>
-  <h2>Resumo</h2>
+  <h2>Resumo da recolha</h2>
   <div class="metrics">
-    <div class="metric"><span>Regras IPv4</span><strong id="ipv4-rules">—</strong></div>
-    <div class="metric"><span>Regras IPv6</span><strong id="ipv6-rules">—</strong></div>
-    <div class="metric"><span>Chains iptables</span><strong id="iptables-chains">—</strong></div>
-    <div class="metric"><span>Regras nftables</span><strong id="nft-rules">—</strong></div>
-    <div class="metric"><span>Descobertas atuais</span><strong id="findings-count">—</strong></div>
+    <div class="metric"><span class="label">Fonte</span><strong id="source" class="value">—</strong></div>
+    <div class="metric"><span class="label">Regras</span><strong id="rules" class="value">—</strong></div>
+    <div class="metric"><span class="label">Chains</span><strong id="chains" class="value">—</strong></div>
+    <div class="metric"><span class="label">Descobertas</span><strong id="findings-count" class="value">—</strong></div>
+    <div class="metric"><span class="label">Recolha (ms)</span><strong id="duration" class="value">—</strong></div>
   </div>
+  <p id="coverage" class="muted"></p>
 </section>
-
-<section>
-  <h2>Fontes de dados</h2>
-  <div class="panel table-wrap">
-    <table><thead><tr><th>Fonte</th><th>Estado</th><th>Tamanho</th><th>SHA-256</th><th>Nota</th></tr></thead>
-    <tbody id="sources-body"><tr><td colspan="5" class="empty">A recolher fontes…</td></tr></tbody></table>
-  </div>
-</section>
-
 <section>
   <h2>Descobertas atuais</h2>
   <div class="panel table-wrap">
-    <table><thead><tr><th>Origem</th><th>Estado</th><th>Regra / cadeia</th><th>Descrição</th></tr></thead>
-    <tbody id="findings-body"><tr><td colspan="4" class="empty">À espera da análise…</td></tr></tbody></table>
+    <table><thead><tr><th>Estado</th><th>Família</th><th>Chain</th><th>Regra</th><th>Descrição</th><th>Linhas</th></tr></thead>
+    <tbody id="findings"><tr><td colspan="6" class="muted">A aguardar dados.</td></tr></tbody></table>
   </div>
 </section>
-
 <section>
-  <h2>Limitações da leitura</h2>
-  <div class="panel"><ul id="limitations" class="muted"><li>À espera da primeira recolha.</li></ul></div>
+  <h2>Atualizações recentes</h2>
+  <div class="panel table-wrap">
+    <table><thead><tr><th>Hora UTC</th><th>Estado</th><th>Descobertas</th><th>Fonte</th></tr></thead>
+    <tbody id="history"><tr><td colspan="4" class="muted">A aguardar dados.</td></tr></tbody></table>
+  </div>
 </section>
-
-<footer>O serviço executa apenas comandos de consulta. Não aplica, altera nem remove regras. A atualização é enviada ao browser quando cada ciclo de recolha termina; não existe garantia de latência ao nível do milissegundo.</footer>
+<section>
+  <h2>Limitações da fonte</h2>
+  <div id="limitations" class="panel"><p class="empty">A aguardar dados.</p></div>
+</section>
+<footer>Os dados são recolhidos pelo serviço CCE no host Linux. A recolha é apenas de leitura; nenhuma regra é aplicada ou alterada. O intervalo representa a frequência de consulta, não uma garantia de latência de milissegundos.</footer>
 </main>
 <script>
 (() => {
   "use strict";
   const byId = (id) => document.getElementById(id);
-  let lastUpdate = 0;
+  const connection = byId("connection");
+  const history = [];
+  const descriptions = {
+    PASS: "Sem divergências reportadas nos campos analisados.",
+    DRIFT: "Foram encontradas divergências face à política.",
+    ERROR: "A recolha falhou; o estado da firewall não está confirmado.",
+    INCONCLUSIVE: "A evidência disponível não permite uma conclusão definitiva.",
+    STARTING: "A aguardar a primeira recolha."
+  };
 
-  function text(id, value) {
-    const node = byId(id);
-    if (node) node.textContent = value == null ? "—" : String(value);
+  function setText(id, value) {
+    byId(id).textContent = value === undefined || value === null || value === "" ? "—" : String(value);
   }
 
-  function badge(value) {
-    const allowed = ["PASS", "DRIFT", "INCONCLUSIVE", "ERROR", "AVAILABLE", "UNAVAILABLE"];
-    const status = String(value || "INCONCLUSIVE").toUpperCase();
-    return allowed.includes(status) ? status : "INCONCLUSIVE";
-  }
-
-  function setConnection(online, message) {
-    byId("connection-dot").className = online ? "dot online" : "dot offline";
-    text("connection-text", message);
-  }
-
-  function appendCell(row, value, className) {
-    const cell = document.createElement("td");
-    if (className) cell.className = className;
-    cell.textContent = value == null ? "—" : String(value);
-    row.appendChild(cell);
-    return cell;
-  }
-
-  function renderSources(sources) {
-    const body = byId("sources-body");
-    body.replaceChildren();
-    for (const key of ["ipv4", "ipv6", "nftables"]) {
-      const source = sources && sources[key];
-      if (!source) continue;
-      const row = document.createElement("tr");
-      appendCell(row, source.label);
-      const stateCell = document.createElement("td");
-      const pill = document.createElement("span");
-      const state = badge(source.status);
-      pill.className = "status status-" + state;
-      pill.textContent = state;
-      stateCell.appendChild(pill);
-      row.appendChild(stateCell);
-      appendCell(row, source.bytes == null ? "—" : source.bytes + " bytes");
-      appendCell(row, source.sha256 ? source.sha256.slice(0, 16) + "…" : "—", "muted");
-      appendCell(row, source.message || "—");
-      body.appendChild(row);
+  function cell(row, value, useCode = false) {
+    const td = document.createElement("td");
+    if (useCode) {
+      const code = document.createElement("code");
+      code.textContent = value === undefined || value === null ? "—" : String(value);
+      td.appendChild(code);
+    } else {
+      td.textContent = value === undefined || value === null ? "—" : String(value);
     }
-    if (!body.children.length) {
+    row.appendChild(td);
+  }
+
+  function updateFindings(items) {
+    const body = byId("findings");
+    body.replaceChildren();
+    if (!Array.isArray(items) || items.length === 0) {
       const row = document.createElement("tr");
-      appendCell(row, "Sem fontes disponíveis.");
+      cell(row, "Não foram registadas descobertas nesta recolha.");
+      const td = row.firstElementChild;
+      td.colSpan = 6;
+      td.className = "muted";
+      body.appendChild(row);
+      return;
+    }
+    for (const item of items.slice(0, 100)) {
+      const row = document.createElement("tr");
+      cell(row, item.status || item.severity || item.code);
+      cell(row, item.family);
+      cell(row, item.chain);
+      cell(row, item.rule_id, true);
+      cell(row, item.reason || item.detail || item.code || item.category);
+      cell(row, Array.isArray(item.observed_lines) ? item.observed_lines.join(", ") : "—");
       body.appendChild(row);
     }
   }
 
-  function renderFindings(findings) {
-    const body = byId("findings-body");
+  function updateHistory(snapshot) {
+    history.unshift({
+      time: snapshot.updated_at_utc,
+      status: snapshot.status,
+      findings: Array.isArray(snapshot.findings) ? snapshot.findings.length : 0,
+      source: snapshot.source
+    });
+    if (history.length > 25) history.length = 25;
+    const body = byId("history");
     body.replaceChildren();
-    for (const finding of (findings || []).slice(0, 100)) {
+    for (const item of history) {
       const row = document.createElement("tr");
-      appendCell(row, finding.source);
-      const statusCell = document.createElement("td");
-      const pill = document.createElement("span");
-      const state = badge(finding.status);
-      pill.className = "status status-" + state;
-      pill.textContent = finding.status || "FINDING";
-      statusCell.appendChild(pill);
-      row.appendChild(statusCell);
-      const rule = [finding.rule_id, finding.family, finding.chain].filter(Boolean).join(" · ");
-      appendCell(row, rule || finding.code);
-      const descriptionCell = appendCell(row, finding.description);
-      if (Array.isArray(finding.observed_lines) && finding.observed_lines.length) {
-        const evidence = document.createElement("span");
-        evidence.className = "finding-description";
-        evidence.textContent = "Linha(s): " + finding.observed_lines.join(", ");
-        descriptionCell.appendChild(evidence);
+      cell(row, item.time);
+      cell(row, item.status);
+      cell(row, item.findings);
+      cell(row, item.source);
+      body.appendChild(row);
+    }
+  }
+
+  function render(snapshot) {
+    const status = String(snapshot.status || "INCONCLUSIVE").toUpperCase();
+    const badge = byId("status");
+    badge.textContent = status;
+    badge.className = "badge badge-" + (["PASS","DRIFT","ERROR","INCONCLUSIVE"].includes(status) ? status : "UNKNOWN");
+    setText("description", snapshot.error || descriptions[status] || "Resultado recebido do CCE.");
+    setText("updated", snapshot.updated_at_utc ? "Atualizado " + snapshot.updated_at_utc : "Ainda sem atualização");
+    setText("source", snapshot.source);
+    const summary = snapshot.summary || {};
+    setText("rules", summary.rules_total ?? summary.rules_semantically_compared);
+    setText("chains", summary.chains_total ?? summary.base_chains);
+    setText("findings-count", Array.isArray(snapshot.findings) ? snapshot.findings.length : 0);
+    setText("duration", snapshot.collection_duration_ms);
+    setText("coverage", snapshot.scope ? "Âmbito: " + snapshot.scope + " · Intervalo configurado: " + snapshot.interval_seconds + " s" : "");
+    updateFindings(snapshot.findings || []);
+    updateHistory(snapshot);
+    const warnings = [...(snapshot.warnings || []), ...(snapshot.partial ? ["Recolha parcial; consulta as limitações antes de interpretar o resultado."] : [])];
+    const warningBox = byId("warnings");
+    warningBox.replaceChildren();
+    for (const warning of warnings) {
+      const p = document.createElement("p");
+      p.className = "warning";
+      p.textContent = warning;
+      warningBox.appendChild(p);
+    }
+    const limits = byId("limitations");
+    limits.replaceChildren();
+    const items = snapshot.limitations || [];
+    if (!items.length) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "Sem limitações adicionais reportadas.";
+      limits.appendChild(p);
+    } else {
+      const ul = document.createElement("ul");
+      for (const item of items) {
+        const li = document.createElement("li");
+        li.textContent = item;
+        ul.appendChild(li);
       }
-      body.appendChild(row);
-    }
-    if (!body.children.length) {
-      const row = document.createElement("tr");
-      const cell = appendCell(row, "Sem descobertas nesta recolha.");
-      cell.colSpan = 4;
-      body.appendChild(row);
+      limits.appendChild(ul);
     }
   }
 
-  function renderLimitations(items) {
-    const list = byId("limitations");
-    list.replaceChildren();
-    for (const item of (items || [])) {
-      const li = document.createElement("li");
-      li.textContent = item;
-      list.appendChild(li);
-    }
-  }
+  fetch("/api/v1/status", { cache: "no-store" })
+    .then((response) => {
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return response.json();
+    })
+    .then(render)
+    .catch(() => { connection.textContent = "Serviço indisponível"; connection.className = "connection disconnected"; });
 
-  function render(data) {
-    if (!data || typeof data !== "object") return;
-    const status = badge(data.status);
-    const overall = byId("overall-status");
-    overall.className = "status status-" + status;
-    overall.textContent = status;
-    const summary = data.summary || {};
-    text("ipv4-rules", summary.ipv4_rules);
-    text("ipv6-rules", summary.ipv6_rules);
-    text("iptables-chains", summary.iptables_chains);
-    text("nft-rules", summary.nft_rules);
-    text("findings-count", summary.findings);
-    text("collection-time", "Tempo de recolha: " + (data.collection_duration_ms ?? "—") + " ms");
-    text("refresh-rate", "Intervalo nominal: " + (data.refresh_interval_ms ?? "—") + " ms");
-    text("global-note", status === "ERROR"
-      ? "Não foi possível obter dados de nenhuma fonte."
-      : status === "DRIFT"
-        ? "Foram encontradas divergências na política ou na análise atual."
-        : "A recolha terminou. INCONCLUSIVE não representa um resultado PASS.");
-    text("updated-at", "Última atualização: " + (data.generated_at_utc || "—"));
-    renderSources(data.sources);
-    renderFindings(data.findings);
-    renderLimitations(data.limitations);
-    lastUpdate = Date.now();
-  }
-
-  const stream = new EventSource("/api/v1/events");
-  stream.onopen = () => setConnection(true, "Ligação ativa");
-  stream.onerror = () => setConnection(false, "A tentar restabelecer ligação");
-  stream.addEventListener("snapshot", (event) => {
-    try {
-      render(JSON.parse(event.data));
-      setConnection(true, "Ligação ativa");
-    } catch (_) {
-      setConnection(false, "Resposta inválida do serviço");
-    }
-  });
-  window.setInterval(() => {
-    if (!lastUpdate) return;
-    const seconds = Math.max(0, Math.floor((Date.now() - lastUpdate) / 1000));
-    if (seconds > 3) setConnection(false, "Dados sem atualização há " + seconds + " s");
-  }, 1000);
+  const events = new EventSource("/events");
+  events.onopen = () => {
+    connection.textContent = "Ligação ativa · fluxo SSE";
+    connection.className = "connection connected";
+  };
+  events.onmessage = (event) => {
+    try { render(JSON.parse(event.data)); }
+    catch (_) { connection.textContent = "Evento inválido"; connection.className = "connection disconnected"; }
+  };
+  events.onerror = () => {
+    connection.textContent = "A reconectar…";
+    connection.className = "connection disconnected";
+  };
 })();
 </script>
 </body>
@@ -661,216 +579,204 @@ footer { margin-top: 22px; padding-top: 12px; border-top: 1px solid #d7dde4; col
 """
 
 
-class _DashboardHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
+def validate_remote_access(
+    host: str,
+    allow_remote: bool,
+    token: str | None,
+    trusted_transport: bool,
+) -> bool:
+    """Valida a configuração de acesso remoto; devolve se exige autenticação."""
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = host.lower() == "localhost"
+
+    if is_loopback:
+        return False
+    if not allow_remote:
+        raise ValueError(
+            "O serviço está limitado a localhost. Usa --allow-remote "
+            "apenas numa rede privada protegida."
+        )
+    if not token or len(token) < 32:
+        raise ValueError(
+            "Acesso remoto exige um token com pelo menos 32 caracteres "
+            "na variável de ambiente configurada."
+        )
+    if not trusted_transport:
+        raise ValueError(
+            "Acesso remoto exige --trusted-transport e uma VPN ou proxy HTTPS "
+            "com controlo de acesso."
+        )
+    return True
 
 
-def _make_handler(
-    state: DashboardState,
-    stop_event: threading.Event,
-    username: str,
-    password: str | None,
-):
-    expected_authorisation = None
-    if password is not None:
-        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
-        expected_authorisation = "Basic " + token
+def create_dashboard_server(
+    host: str,
+    port: int,
+    state: LiveState,
+    token: str | None = None,
+    allow_remote: bool = False,
+    trusted_transport: bool = False,
+) -> ThreadingHTTPServer:
+    require_auth = validate_remote_access(
+        host,
+        allow_remote,
+        token,
+        trusted_transport,
+    )
 
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-        server_version = "CCE"
+    class DashboardHandler(BaseHTTPRequestHandler):
+        server_version = "CCE-Dashboard"
         sys_version = ""
 
-        def _send_headers(self, status: int, content_type: str) -> None:
-            self.send_response(status)
+        def _authorised(self) -> bool:
+            if not require_auth:
+                return True
+            expected = "Basic " + base64.b64encode(
+                ("cce:" + str(token)).encode("utf-8")
+            ).decode("ascii")
+            supplied = self.headers.get("Authorization", "")
+            return hmac.compare_digest(supplied, expected)
+
+        def _headers(self, content_type: str) -> None:
             self.send_header("Content-Type", content_type)
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "no-store, max-age=0")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; style-src 'unsafe-inline'; "
-                "script-src 'unsafe-inline'; connect-src 'self'; "
-                "base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+                "default-src 'self'; script-src 'unsafe-inline'; "
+                "style-src 'unsafe-inline'; connect-src 'self'; "
+                "base-uri 'none'; frame-ancestors 'none'",
             )
 
-        def _authorized(self) -> bool:
-            if expected_authorisation is None:
+        def _send_json(self, value: dict[str, Any], code: int = 200) -> None:
+            payload = json.dumps(value, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self._headers("application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def _check_auth(self) -> bool:
+            if self._authorised():
                 return True
-            supplied = self.headers.get("Authorization", "")
-            return hmac.compare_digest(supplied, expected_authorisation)
-
-        def _unauthorized(self) -> None:
             self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="CCE firewall dashboard", charset="UTF-8"')
-            self.send_header("Content-Length", "0")
+            self.send_header("WWW-Authenticate", 'Basic realm="CCE firewall dashboard"')
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
             self.end_headers()
+            return False
 
-        def _send_json(self, payload: dict[str, Any]) -> None:
-            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            self._send_headers(200, "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             path = urlsplit(self.path).path
-            if not self._authorized():
-                self._unauthorized()
+            if path == "/healthz":
+                self._send_json({"ok": True})
+                return
+            if not self._check_auth():
                 return
 
             if path == "/":
-                body = DASHBOARD_HTML.encode("utf-8")
-                self._send_headers(200, "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
+                payload = LIVE_HTML.encode("utf-8")
+                self.send_response(200)
+                self._headers("text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
-                self.wfile.write(body)
-                return
-
-            if path == "/healthz":
-                self._send_json({"status": "ok", "read_only": True})
+                self.wfile.write(payload)
                 return
 
             if path == "/api/v1/status":
-                version, payload = state.snapshot()
-                self._send_json(
-                    {
-                        "version": version,
-                        "data": payload,
-                    }
-                )
+                self._send_json(state.snapshot())
                 return
 
-            if path == "/api/v1/events":
-                self._send_headers(200, "text/event-stream; charset=utf-8")
+            if path == "/events":
+                self.send_response(200)
+                self._headers("text/event-stream; charset=utf-8")
                 self.send_header("Connection", "keep-alive")
-                self.send_header("Transfer-Encoding", "chunked")
-                self.send_header("X-Accel-Buffering", "no")
                 self.end_headers()
-
-                def write_chunk(payload_bytes: bytes) -> None:
-                    header = f"{len(payload_bytes):X}\r\n".encode("ascii")
-                    self.wfile.write(header + payload_bytes + b"\r\n")
-                    self.wfile.flush()
-
-                cursor = -1
+                sequence = -1
                 try:
-                    while not stop_event.is_set():
-                        version, payload = state.wait_for_change(cursor, timeout=15.0)
-                        if payload is None or version <= cursor:
-                            write_chunk(b": keep-alive\n\n")
-                            continue
-                        event = (
-                            f"id: {version}\n"
-                            "event: snapshot\n"
-                            "data: "
-                            + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-                            + "\n\n"
+                    while not state.stop_event.is_set():
+                        current_sequence, current = state.wait_for_update(
+                            sequence,
+                            timeout=15,
                         )
-                        write_chunk(event.encode("utf-8"))
-                        cursor = version
+                        if current is None:
+                            self.wfile.write(b": keep-alive\n\n")
+                            self.wfile.flush()
+                            continue
+                        sequence = current_sequence
+                        payload = json.dumps(
+                            current,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        self.wfile.write(
+                            ("id: " + str(sequence) + "\n").encode("ascii")
+                        )
+                        self.wfile.write(
+                            ("data: " + payload + "\n\n").encode("utf-8")
+                        )
+                        self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     return
                 return
 
-            body = b'{"error":"not_found"}'
-            self._send_headers(404, "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_json({"error": "not_found"}, code=404)
 
-        def log_message(self, format_string: str, *args: Any) -> None:
-            # Do not log query strings or authentication headers.
-            super().log_message(format_string, *args)
+        def log_message(self, format: str, *args: Any) -> None:
+            # Não regista headers de autenticação nem dados dos snapshots.
+            return
 
-    return Handler
+    class CCEThreadingHTTPServer(ThreadingHTTPServer):
+        daemon_threads = True
+        allow_reuse_address = True
 
-
-def _collector_loop(
-    state: DashboardState,
-    stop_event: threading.Event,
-    policy: dict[str, Any] | None,
-    interval_ms: int,
-    timeout_seconds: float,
-) -> None:
-    interval = interval_ms / 1000
-    while not stop_event.is_set():
-        started = time.monotonic()
-        try:
-            payload = collect_live_state(
-                policy=policy,
-                timeout_seconds=timeout_seconds,
-                interval_ms=interval_ms,
-            )
-        except Exception:
-            payload = {
-                "generated_at_utc": _utc_now(),
-                "status": "ERROR",
-                "read_only": True,
-                "refresh_interval_ms": interval_ms,
-                "summary": {},
-                "sources": {},
-                "findings": [],
-                "limitations": ["Ocorreu um erro interno durante a recolha; consulta os logs locais do serviço."],
-                "analysis_errors": ["Falha interna de recolha."],
-            }
-        state.publish(payload)
-        elapsed = time.monotonic() - started
-        stop_event.wait(max(0.0, interval - elapsed))
+    server = CCEThreadingHTTPServer((host, port), DashboardHandler)
+    return server
 
 
 def serve_live_dashboard(
+    policy_path: str,
     host: str = "127.0.0.1",
     port: int = 8765,
-    policy: dict[str, Any] | None = None,
-    interval_ms: int = DEFAULT_INTERVAL_MS,
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-    username: str = "cce",
-    password_env: str = "CCE_DASHBOARD_PASSWORD",
+    source: str = "auto",
+    interval_seconds: float = 1.0,
+    allow_remote: bool = False,
+    token_env: str = "CCE_DASHBOARD_TOKEN",
+    trusted_transport: bool = False,
 ) -> None:
-    """Start the read-only live dashboard and its background firewall collector."""
-    if interval_ms < 1000:
-        raise ValueError("O intervalo mínimo de recolha é 1000 ms.")
-    if timeout_seconds <= 0 or timeout_seconds > 30:
-        raise ValueError("O timeout tem de estar entre 0 e 30 segundos.")
-    if port < 1 or port > 65535:
-        raise ValueError("A porta tem de estar entre 1 e 65535.")
-
-    password = os.environ.get(password_env) if password_env else None
-    validate_server_security(host, username, password)
-
-    state = DashboardState()
-    stop_event = threading.Event()
-    handler = _make_handler(state, stop_event, username, password)
-    server = _DashboardHTTPServer((host, port), handler)
-    server.dashboard_state = state
-    collector = threading.Thread(
-        target=_collector_loop,
-        args=(state, stop_event, policy, interval_ms, timeout_seconds),
-        name="cce-firewall-collector",
-        daemon=True,
+    """Inicia o recolhedor read-only e o servidor HTTP/SSE."""
+    collector = LiveSnapshotCollector(policy_path, source=source)
+    token = os.environ.get(token_env)
+    state = LiveState(collector, interval_seconds)
+    server = create_dashboard_server(
+        host,
+        port,
+        state,
+        token=token,
+        allow_remote=allow_remote,
+        trusted_transport=trusted_transport,
     )
 
-    scheme_url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    state.start()
+    actual_host, actual_port = server.server_address[:2]
     print(
-        f"Dashboard CCE: http://{scheme_url_host}:{server.server_port}/ "
-        f"(recolha nominal: {interval_ms} ms; read-only)"
+        f"Dashboard CCE: http://{actual_host}:{actual_port} "
+        f"| fonte={source} | intervalo={interval_seconds:g}s"
     )
-    if not _is_loopback_host(host):
+    if actual_host in {"0.0.0.0", "::"}:
         print(
-            "AVISO: listener de rede ativo. Usa uma VPN privada ou proxy HTTPS; "
-            "não exponhas HTTP diretamente à Internet."
+            "Acesso remoto ativo: protege o serviço com o transporte privado/"
+            "HTTPS configurado e mantém o token fora do histórico do terminal."
         )
-    print("Pressiona Ctrl+C para terminar.")
+    print("Recolha read-only. Ctrl+C para terminar.")
 
-    collector.start()
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
-        pass
+        print("\nA terminar o dashboard CCE.")
     finally:
-        stop_event.set()
+        state.stop()
         server.server_close()
-        collector.join(timeout=timeout_seconds + 1)
