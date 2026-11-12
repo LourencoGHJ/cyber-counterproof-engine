@@ -35,6 +35,7 @@ def test_dashboard_shows_latest_assessment_findings_and_history(tmp_path):
                         "observed_lines": [5],
                     }
                 ],
+                "limitations": ["O modelo não avalia NAT."],
             },
             {
                 "timestamp_utc": "2026-11-12T08:10:00+00:00",
@@ -56,7 +57,72 @@ def test_dashboard_shows_latest_assessment_findings_and_history(tmp_path):
     assert "PASS" in content
     assert "allow-ssh-lab" not in content
     assert "Test error" in content
-    assert "227" not in content
+    assert "CYBER COUNTERPROOF" not in content
+    assert "Limpar filtros" in content
+    assert "Imprimir" in content
+    assert "O modelo não avalia NAT" in content
+
+
+def test_dashboard_has_working_search_filter_sort_and_print_controls(tmp_path):
+    history = tmp_path / "history.json"
+    write_history(
+        history,
+        [
+            {
+                "timestamp_utc": "2026-11-12T08:00:00+00:00",
+                "status": "PASS",
+                "findings": [],
+            },
+            {
+                "timestamp_utc": "2026-11-12T08:05:00+00:00",
+                "status": "DRIFT",
+                "findings": [
+                    {"code": "RULE-MISSING", "rule_id": "allow-ssh", "severity": "high"}
+                ],
+            },
+        ],
+    )
+
+    content = generate_dashboard(history, tmp_path / "dashboard.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="history-search"' in content
+    assert 'id="status-filter"' in content
+    assert 'id="sort-order"' in content
+    assert 'id="clear-filters"' in content
+    assert 'id="print-report"' in content
+    assert "addEventListener('input', applyFilters)" in content
+    assert "addEventListener('change', applyFilters)" in content
+    assert "window.print()" in content
+    assert "row.hidden" in content
+    assert "visible.sort" in content
+    assert "counter.textContent" in content
+
+
+def test_dashboard_expands_context_for_each_execution(tmp_path):
+    history = tmp_path / "history.json"
+    write_history(
+        history,
+        [
+            {
+                "timestamp_utc": "2026-11-12T08:00:00+00:00",
+                "status": "ERROR",
+                "error": "Invalid input",
+                "validation_errors": {"policy": ["Missing field"]},
+                "findings": [],
+            }
+        ],
+    )
+
+    content = generate_dashboard(history, tmp_path / "dashboard.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "<details>" in content
+    assert "<summary>Ver detalhes</summary>" in content
+    assert "Erros de validação" in content
+    assert "Missing field" in content
 
 
 def test_dashboard_shows_empty_history_without_fabricated_metrics(tmp_path):
@@ -70,6 +136,7 @@ def test_dashboard_shows_empty_history_without_fabricated_metrics(tmp_path):
     assert "Ainda não existem verificações" in content
     assert ">0</strong>" in content
     assert "Sem dados" not in content
+    assert "Não existem execuções que correspondam aos filtros." in content
 
 
 def test_dashboard_escapes_untrusted_values_and_limits_status_css_classes(tmp_path):
@@ -104,7 +171,7 @@ def test_dashboard_escapes_untrusted_values_and_limits_status_css_classes(tmp_pa
     assert 'class="status status-&lt;' not in content
 
 
-def test_dashboard_is_self_contained_and_has_no_decorative_scripts_or_charts(tmp_path):
+def test_dashboard_is_self_contained_and_does_not_use_decorative_branding(tmp_path):
     history = tmp_path / "history.json"
     write_history(history, [{"status": "PASS", "findings": []}])
 
@@ -114,7 +181,7 @@ def test_dashboard_is_self_contained_and_has_no_decorative_scripts_or_charts(tmp
 
     assert "http://" not in content
     assert "https://" not in content
-    assert "<script" not in content
+    assert "CYBER COUNTERPROOF" not in content
     assert "<svg" not in content
     assert "gradient" not in content.lower()
 
