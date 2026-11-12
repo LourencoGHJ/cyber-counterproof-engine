@@ -1,6 +1,7 @@
 import json
 
 from cce.iptables_policy_compare import compare_policy_rules_to_snapshots
+from cce.iptables_save import analyze_iptables_saves
 
 
 def baseline_rule(**overrides):
@@ -131,3 +132,53 @@ def test_ipv4_specific_policy_rule_is_not_applicable_to_ipv6():
     report = compare(baseline_rule(), text, family="ipv6")
 
     assert report["comparisons"][0]["status"] == "NOT_APPLICABLE"
+
+
+
+def full_policy(rule):
+    return {
+        "policy_id": "test-baseline",
+        "input_policy": "drop",
+        "output_policy": "accept",
+        "rules": [rule],
+    }
+
+
+def test_semantic_comparison_is_integrated_into_iptables_save_analysis():
+    ipv4 = snapshot(
+        "-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\\n"
+    )
+    ipv6 = snapshot("")
+
+    result = analyze_iptables_saves(
+        full_policy(baseline_rule()),
+        ipv4,
+        ipv6,
+    )
+
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["summary"]["rules_semantically_compared"] == 1
+    assert result["summary"]["semantic_rule_matches"] == 1
+    assert result["summary"]["semantic_rule_drifts"] == 0
+    statuses = [
+        item["status"]
+        for item in result["rule_policy_comparison"]["comparisons"]
+    ]
+    assert statuses == ["MATCHED", "NOT_APPLICABLE"]
+
+
+def test_semantic_rule_drift_changes_integrated_status_to_drift():
+    ipv4 = snapshot("-A INPUT -p tcp --dport 443 -j ACCEPT\\n")
+    ipv6 = snapshot("")
+
+    result = analyze_iptables_saves(
+        full_policy(baseline_rule()),
+        ipv4,
+        ipv6,
+    )
+
+    assert result["status"] == "DRIFT"
+    assert result["summary"]["semantic_rule_drifts"] == 1
+    assert result["rule_policy_comparison"]["findings"][0]["status"] == (
+        "BROADER_SCOPE"
+    )
