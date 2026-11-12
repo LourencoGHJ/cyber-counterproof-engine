@@ -772,10 +772,18 @@ def create_dashboard_server(
             if path == "/events":
                 self.send_response(200)
                 self._headers("text/event-stream; charset=utf-8")
+                self.send_header("Transfer-Encoding", "chunked")
                 self.send_header("Connection", "keep-alive")
                 self.end_headers()
                 self.connection.settimeout(30)
-                sequence = -1
+
+                def write_chunk(payload: bytes) -> None:
+                    self.wfile.write(f"{len(payload):X}\r\n".encode("ascii"))
+                    self.wfile.write(payload)
+                    self.wfile.write(b"\r\n")
+                    self.wfile.flush()
+
+                sequence = 0
                 try:
                     while not state.stop_event.is_set():
                         current_sequence, current = state.wait_for_update(
@@ -783,8 +791,7 @@ def create_dashboard_server(
                             timeout=15,
                         )
                         if current is None:
-                            self.wfile.write(b": keep-alive\n\n")
-                            self.wfile.flush()
+                            write_chunk(b": keep-alive\n\n")
                             continue
                         sequence = current_sequence
                         payload = json.dumps(
@@ -792,15 +799,18 @@ def create_dashboard_server(
                             ensure_ascii=False,
                             separators=(",", ":"),
                         )
-                        self.wfile.write(
+                        event = (
                             ("id: " + str(sequence) + "\n").encode("ascii")
+                            + ("data: " + payload + "\n\n").encode("utf-8")
                         )
-                        self.wfile.write(
-                            ("data: " + payload + "\n\n").encode("utf-8")
-                        )
-                        self.wfile.flush()
+                        write_chunk(event)
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     return
+                try:
+                    self.wfile.write(b"0\r\n\r\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
                 return
 
             self._send_json({"error": "not_found"}, code=404)
