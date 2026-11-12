@@ -165,7 +165,7 @@ def test_live_collector_uses_nftables_json_when_iptables_is_unavailable(
     assert result["source"] == "nftables"
     assert result["summary"]["nftables_base_chains"] == 3
     assert result["partial"] is True
-    assert "Não foi possível recolher snapshots iptables" in " ".join(result["warnings"])
+    assert "A análise da fonte nftables tem cobertura limitada" in " ".join(result["warnings"])
     assert result["evidence"]["nftables"]["sha256"]
 
 
