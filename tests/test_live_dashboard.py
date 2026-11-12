@@ -150,7 +150,7 @@ def test_sudo_readonly_executes_only_fixed_listing_commands(tmp_path, monkeypatc
 
     def fake_run(command, **kwargs):
         calls.append(command)
-        assert kwargs["shell"] is False if "shell" in kwargs else True
+        assert "shell" not in kwargs
         return subprocess.CompletedProcess(
             command, 0, stdout=iptables_snapshot(), stderr=""
         )
@@ -397,6 +397,7 @@ def test_cli_exposes_live_dashboard_with_millisecond_interval():
             "--policy", "config/policy.json",
             "--source", "auto",
             "--interval-ms", "1000",
+            "--sudo-readonly",
         ]
     )
 
@@ -404,6 +405,7 @@ def test_cli_exposes_live_dashboard_with_millisecond_interval():
     assert args.interval_ms == 1000
     assert args.source == "auto"
     assert args.host == "127.0.0.1"
+    assert args.sudo_readonly is True
 
 
 def test_sse_endpoint_streams_json_updates():
