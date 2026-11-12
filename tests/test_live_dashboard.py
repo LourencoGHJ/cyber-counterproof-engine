@@ -62,9 +62,11 @@ def test_live_collection_reads_firewall_sources_and_returns_redacted_analysis(
         lambda command: f"/usr/sbin/{command}",
     )
     calls = []
+    source_barrier = threading.Barrier(3)
 
     def fake_run(command, **kwargs):
         calls.append(command)
+        source_barrier.wait(timeout=2)
         assert kwargs["shell"] is False
         assert kwargs["capture_output"] is True
         binary = Path(command[0]).name
