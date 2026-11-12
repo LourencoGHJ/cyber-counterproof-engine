@@ -875,7 +875,7 @@ def create_dashboard_server(
                     while not state.stop_event.is_set():
                         current_sequence, current = state.wait_for_update(
                             sequence,
-                            timeout=1.0,
+                            timeout=min(1.0, state.interval_seconds),
                         )
                         if current is None:
                             heartbeat = json.dumps(
