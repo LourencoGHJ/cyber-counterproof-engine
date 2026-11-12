@@ -170,13 +170,13 @@ def _impact(status: str, action: str) -> str:
     if status == "ACTION_MISMATCH":
         return (
             "potential_exposure"
-            if action == "drop"
+            if action in {"drop", "reject"}
             else "availability_or_policy_violation"
         )
     if status == "MISSING":
         return (
             "potential_exposure"
-            if action == "drop"
+            if action in {"drop", "reject"}
             else "required_allow_rule_missing"
         )
     if status == "BROADER_SCOPE":
