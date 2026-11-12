@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from cce.cli import make_parser
 from cce.live_dashboard import (
     LIVE_HTML,
     LiveSnapshotCollector,
@@ -329,6 +330,54 @@ def test_remote_http_server_requires_basic_auth():
         request.add_header("Authorization", "Basic " + credentials)
         with urlopen(request, timeout=2) as response:
             assert response.status == 200
+    finally:
+        state.stop()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+
+def test_cli_exposes_live_dashboard_with_millisecond_interval():
+    args = make_parser().parse_args(
+        [
+            "serve-dashboard",
+            "--policy", "config/policy.json",
+            "--source", "auto",
+            "--interval-ms", "1000",
+        ]
+    )
+
+    assert args.command == "serve-dashboard"
+    assert args.interval_ms == 1000
+    assert args.source == "auto"
+    assert args.host == "127.0.0.1"
+
+
+def test_sse_endpoint_streams_json_updates():
+    state = LiveState(FakeCollector(), interval_seconds=1.0)
+    server = create_dashboard_server("127.0.0.1", 0, state)
+    worker = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.05},
+        daemon=True,
+    )
+    state.start()
+    worker.start()
+    try:
+        address, port = server.server_address[:2]
+        with urlopen(f"http://{address}:{port}/events", timeout=3) as response:
+            assert response.headers["Content-Type"].startswith("text/event-stream")
+            data_line = ""
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                line = response.readline().decode("utf-8").strip()
+                if line.startswith("data: "):
+                    data_line = line[6:]
+                    break
+            assert data_line
+            event = json.loads(data_line)
+            assert event["status"] == "DRIFT"
+            assert event["sequence"] >= 1
     finally:
         state.stop()
         server.shutdown()
