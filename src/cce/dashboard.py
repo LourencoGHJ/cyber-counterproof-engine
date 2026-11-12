@@ -333,7 +333,7 @@ def generate_dashboard(
 
     latest = history[-1] if history else {}
     latest_status = _status(latest.get("status")) if history else "SEM DADOS"
-    latest_label, latest_class, latest_message = _STATUS_META.get(
+    _, latest_class, latest_message = _STATUS_META.get(
         latest_status,
         (
             latest_status,
@@ -732,6 +732,7 @@ tbody tr:hover { background: rgba(95,133,171,.06); }
              "Resultado da última verificação")
         ),
         "LATEST_MESSAGE": _escape(latest_message),
+        "LATEST_FINDINGS_HTML": findings,
         "LATEST_FINDINGS": str(latest_findings_count),
         "TOTAL_CHECKS": str(total),
         "PASS_COUNT": str(passed),
@@ -739,7 +740,6 @@ tbody tr:hover { background: rgba(95,133,171,.06); }
         "FINDINGS_TOTAL": str(findings_events),
         "TREND_CHART": chart,
         "STATUS_DISTRIBUTION": distribution,
-        "LATEST_FINDINGS_HTML": findings,
         "SEVERITY_SUMMARY": severity_summary,
         "ACTIVITY_ROWS": activity,
     }
