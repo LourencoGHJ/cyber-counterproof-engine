@@ -70,7 +70,7 @@ def test_dashboard_renders_overview_distribution_findings_and_activity(tmp_path)
     assert "DRIFT" in content
     assert "CCE-UNKNOWN" in content
     assert "allow-ssh-lab" not in content  # Findings are scoped to the latest run.
-    assert "Test error" not in content  # The latest run has no error.
+    assert "Test error" in content  # Historical errors remain visible in activity.
     assert "Verificações registadas" in content
     assert "FIREWALL SECURITY OPERATIONS" in content
 
