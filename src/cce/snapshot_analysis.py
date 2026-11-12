@@ -523,7 +523,15 @@ def analyze_firewall_snapshots(
         )
         summary["policy_comparison_findings"] = policy_summary["findings_total"]
         findings.extend(
-            {"category": "policy_comparison", **finding}
+            {
+                "category": "policy_comparison",
+                "policy_category": finding["category"],
+                **{
+                    key: value
+                    for key, value in finding.items()
+                    if key != "category"
+                },
+            }
             for finding in policy_comparison["findings"]
         )
         if policy_summary["policy_drift_findings"]:
