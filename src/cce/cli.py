@@ -142,6 +142,10 @@ def make_parser():
         "--ipv6",
         help="Snapshot ip6tables-save IPv6 (opcional se for fornecido IPv4).",
     )
+    snapshot_analysis.add_argument(
+        "--policy",
+        help="Política declarativa opcional para comparação com os snapshots.",
+    )
     snapshot_analysis.add_argument("--output", required=True)
 
     chain_flow = subs.add_parser(
@@ -191,6 +195,18 @@ def main():
                 )
                 return 2
 
+            policy = None
+            if args.policy:
+                policy = load_json(args.policy)
+                policy_errors = validate_policy(policy)
+                if policy_errors:
+                    for error in policy_errors:
+                        print(
+                            f"ERRO DE POLÍTICA: {error}",
+                            file=sys.stderr,
+                        )
+                    return 2
+
             snapshots = {}
             for family, argument in (
                 ("ipv4", args.ipv4),
@@ -206,7 +222,15 @@ def main():
                     "text": snapshot_path.read_text(encoding="utf-8"),
                 }
 
-            report = analyze_firewall_snapshots(snapshots)
+            report = analyze_firewall_snapshots(
+                snapshots,
+                policy=policy,
+            )
+            if args.policy:
+                report["policy_evidence"] = {
+                    "path": args.policy,
+                    "sha256": sha256_file(args.policy),
+                }
             write_json_report(report, args.output)
             summary = report["summary"]
             print(
@@ -219,9 +243,22 @@ def main():
                 f"Ciclos potenciais: {summary['potential_chain_cycles']} | "
                 f"Chains sem caminho: {summary['structurally_unreachable_user_chains']}"
             )
+            if policy is not None:
+                print(
+                    "Política | "
+                    f"Base coincidentes: {summary['policy_base_matches']} | "
+                    f"Base divergentes: {summary['policy_base_drifts']} | "
+                    f"Regras coincidentes: {summary['policy_rule_matches']} | "
+                    f"Drifts de regras: {summary['policy_rule_drifts']} | "
+                    f"Regras inconclusivas: "
+                    f"{summary['policy_rule_inconclusive']}"
+                )
             print(f"Relatório: {args.output}")
 
-            if summary["rule_conflict_findings"]:
+            if (
+                summary["rule_conflict_findings"]
+                or summary["policy_drift_findings"]
+            ):
                 return 1
             return 3
 
