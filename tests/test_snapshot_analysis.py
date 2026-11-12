@@ -87,6 +87,155 @@ def test_malformed_snapshot_skips_semantic_analyses():
     assert family["rule_conflicts"]["findings"] == []
 
 
+def valid_policy():
+    return {
+        "policy_id": "baseline-test",
+        "input_policy": "drop",
+        "output_policy": "accept",
+        "forward_policy": "drop",
+        "rules": [
+            {
+                "id": "allow-https-lab",
+                "chain": "input",
+                "action": "accept",
+                "protocol": "tcp",
+                "source": "192.0.2.0/24",
+                "destination_port": 443,
+                "service": "https",
+            }
+        ],
+    }
+
+
+def policy_snapshot(input_policy="DROP", rule_line=None):
+    text = (
+        "*filter\n"
+        f":INPUT {input_policy} [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+    )
+    if rule_line:
+        text += rule_line
+    return text + "COMMIT\n"
+
+
+def test_policy_aware_analysis_reports_supported_matches_without_global_pass():
+    text = policy_snapshot(
+        rule_line="-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\n"
+    )
+
+    report = analyze_firewall_snapshots(
+        {"ipv4": snapshot_entry(text)},
+        policy=valid_policy(),
+    )
+
+    comparison = report["policy_comparison"]
+    assert report["status"] == "INCONCLUSIVE"
+    assert comparison["status"] == "INCONCLUSIVE"
+    assert comparison["summary"]["base_policy_matches"] == 3
+    assert comparison["summary"]["base_policy_drifts"] == 0
+    assert comparison["summary"]["semantic_rule_matches"] == 1
+    assert comparison["summary"]["semantic_rule_drifts"] == 0
+    assert comparison["summary"]["policy_drift_findings"] == 0
+    assert report["summary"]["policy_base_matches"] == 3
+    assert report["summary"]["policy_rule_matches"] == 1
+
+
+def test_policy_aware_analysis_reports_base_and_rule_drifts():
+    text = policy_snapshot(
+        input_policy="ACCEPT",
+        rule_line="-A INPUT -p tcp --dport 443 -j ACCEPT\n",
+    )
+
+    report = analyze_firewall_snapshots(
+        {"ipv4": snapshot_entry(text)},
+        policy=valid_policy(),
+    )
+
+    comparison = report["policy_comparison"]
+    assert report["status"] == "DRIFT"
+    assert comparison["status"] == "DRIFT"
+    assert comparison["summary"]["base_policy_drifts"] == 1
+    assert comparison["summary"]["semantic_rule_drifts"] == 1
+    assert comparison["summary"]["policy_drift_findings"] == 2
+    assert report["summary"]["policy_comparison_findings"] == 2
+    assert sum(
+        item["category"] == "policy_comparison"
+        for item in report["findings"]
+    ) == 2
+
+
+def test_policy_comparison_stays_inconclusive_for_malformed_snapshot():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        "not-an-iptables-rule\n"
+        "COMMIT\n"
+    )
+
+    report = analyze_firewall_snapshots(
+        {"ipv4": snapshot_entry(text)},
+        policy=valid_policy(),
+    )
+
+    comparison = report["policy_comparison"]
+    assert comparison["analysis_status"] == "partial"
+    assert comparison["summary"]["base_policy_inconclusive"] == 3
+    assert comparison["summary"]["semantic_rule_inconclusive"] == 1
+    assert comparison["summary"]["policy_drift_findings"] == 0
+    assert report["status"] == "INCONCLUSIVE"
+
+
+def test_policy_aware_analysis_rejects_invalid_policy():
+    invalid = valid_policy()
+    invalid["input_policy"] = "permit"
+
+    with pytest.raises(ValueError, match="Política inválida"):
+        analyze_firewall_snapshots(
+            {"ipv4": snapshot_entry(policy_snapshot())},
+            policy=invalid,
+        )
+
+
+def test_cli_accepts_optional_policy_and_records_its_hash(
+    tmp_path, monkeypatch, capsys
+):
+    import hashlib
+
+    policy_path = tmp_path / "policy.json"
+    snapshot_path = tmp_path / "firewall.save"
+    output_path = tmp_path / "full-audit.json"
+    policy_data = valid_policy()
+    policy_path.write_text(json.dumps(policy_data), encoding="utf-8")
+    snapshot_path.write_text(
+        policy_snapshot(
+            rule_line="-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cce",
+            "analyze-snapshot",
+            "--policy", str(policy_path),
+            "--ipv4", str(snapshot_path),
+            "--output", str(output_path),
+        ],
+    )
+
+    assert main() == 3
+    output = capsys.readouterr().out
+    assert "CCE: INCONCLUSIVE" in output
+    assert "Base coincidentes: 3" in output
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["policy_comparison"]["summary"]["semantic_rule_matches"] == 1
+    assert report["policy_evidence"]["sha256"] == hashlib.sha256(
+        policy_path.read_bytes()
+    ).hexdigest()
+
+
 def test_rejects_empty_snapshot_mapping():
     with pytest.raises(ValueError, match="pelo menos um snapshot"):
         analyze_firewall_snapshots({})
