@@ -33,6 +33,8 @@ from cce.packet_cli import (
 )
 from cce.policy_conflicts import analyze_iptables_rule_conflicts
 from cce.iptables_chain_flow import analyze_iptables_chain_flow
+from cce.adapters.registry import create_firewall_adapter
+from cce.platform.detection import detect_platform, format_doctor, format_platform_info
 
 
 def make_parser():
@@ -220,6 +222,48 @@ def make_parser():
     )
     conflicts.add_argument("--output", required=True)
 
+    subs.add_parser(
+        "doctor",
+        help="Diagnosticar o sistema operativo e as capacidades do host.",
+    )
+
+    platform_info = subs.add_parser(
+        "platform-info",
+        help="Consultar informação estruturada da plataforma.",
+    )
+    platform_info.add_argument(
+        "--json",
+        action="store_true",
+        help="Apresentar o diagnóstico em JSON.",
+    )
+    platform_info.add_argument(
+        "--output",
+        help="Guardar o diagnóstico em JSON num ficheiro.",
+    )
+
+    collect = subs.add_parser(
+        "collect",
+        help="Executar uma recolha de firewall através do adaptador da plataforma.",
+    )
+    collect.add_argument("--policy", required=True)
+    collect.add_argument(
+        "--once",
+        action="store_true",
+        required=True,
+        help="Executar uma única recolha e terminar.",
+    )
+    collect.add_argument(
+        "--source",
+        choices=("auto", "iptables", "nftables"),
+        default="auto",
+    )
+    collect.add_argument("--timeout", type=float, default=8)
+    collect.add_argument("--sudo-readonly", action="store_true")
+    collect.add_argument(
+        "--output",
+        default="reports/live-collection.json",
+    )
+
     return parser
 
 
@@ -227,6 +271,67 @@ def main():
     args = make_parser().parse_args()
 
     try:
+        if args.command == "doctor":
+            info = detect_platform()
+            print(format_doctor(info))
+            return 0
+
+        if args.command == "platform-info":
+            info = detect_platform()
+            if args.output or args.json:
+                import json
+
+                payload = json.dumps(info, ensure_ascii=False, indent=2)
+                if args.output:
+                    output = Path(args.output)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_text(payload + "\\n", encoding="utf-8")
+                    print(f"Platform report: {output}")
+                else:
+                    print(payload)
+            else:
+                print(format_platform_info(info))
+            return 0
+
+        if args.command == "collect":
+            adapter = create_firewall_adapter(
+                policy_path=args.policy,
+                source=args.source,
+                timeout_seconds=args.timeout,
+                sudo_readonly=args.sudo_readonly,
+            )
+
+            probe = adapter.probe()
+            print(f"Adaptador: {probe['adapter_id']}")
+            print(f"Plataforma: {probe['platform']}")
+            print(f"Disponível: {'sim' if probe['available'] else 'não'}")
+
+            if not probe["available"]:
+                print(
+                    "ERRO: Nenhuma ferramenta compatível foi encontrada.",
+                    file=sys.stderr,
+                )
+                return 2
+
+            result = adapter.collect()
+            write_json_report(result, args.output)
+
+            print(f"CCE: {result.get('status', 'UNKNOWN')}")
+            print(f"Fonte: {result.get('source', 'N/D')}")
+            print(f"Recolha parcial: {result.get('partial', False)}")
+            print(f"Resumo: {result.get('summary', {})}")
+            print(f"Avisos: {result.get('warnings', [])}")
+            print(f"Relatório: {args.output}")
+
+            status = result.get("status")
+            if status == "ERROR":
+                return 2
+            if status == "DRIFT":
+                return 1
+            if status == "INCONCLUSIVE":
+                return 3
+            return 0
+
         if args.command == "evaluate-packet":
             return run_packet_evaluation(args)
 
@@ -765,7 +870,7 @@ def main():
         if args.command not in {
             "compare-policy", "compare-live", "compare-iptables-save",
             "analyze-rule-conflicts", "analyze-snapshot", "analyze-chain-flow",
-            "monitor", "dashboard", "serve-dashboard"
+            "monitor", "dashboard", "serve-dashboard", "collect"
         }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)

@@ -284,7 +284,13 @@ class LiveSnapshotCollector:
             for finding in source_result.get("findings", []):
                 findings.append({"source": source, **finding})
             limitations.extend(source_result.get("limitations", []))
-            evidence[source] = source_result.get("evidence", {})
+            source_evidence = source_result.get("evidence", {})
+            if source == "nftables":
+                evidence[source] = source_evidence.get(
+                    "nftables", source_evidence
+                )
+            else:
+                evidence[source] = source_evidence
 
         statuses = [item.get("status") for item in results.values()]
         # Uma divergência observada numa fonte suportada continua a ser relevante.

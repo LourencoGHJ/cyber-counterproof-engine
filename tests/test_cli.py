@@ -231,7 +231,7 @@ def test_serve_dashboard_cli_loads_policy_and_starts_server(
     def fake_serve(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr("cce.live_dashboard.serve_live_dashboard", fake_serve)
+    monkeypatch.setattr("cce.cli.serve_live_dashboard", fake_serve)
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -264,7 +264,7 @@ def test_serve_dashboard_cli_rejects_invalid_policy(tmp_path, monkeypatch, capsy
     def should_not_start(**_kwargs):
         raise AssertionError("The service must not start with an invalid policy.")
 
-    monkeypatch.setattr("cce.live_dashboard.serve_live_dashboard", should_not_start)
+    monkeypatch.setattr("cce.cli.serve_live_dashboard", should_not_start)
     monkeypatch.setattr(
         "sys.argv",
         ["cce", "serve-dashboard", "--policy", str(policy_file)],
