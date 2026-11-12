@@ -1,9 +1,9 @@
 """Conservative comparison of declarative policy rules with iptables-save IR.
 
 Only fields represented by the current policy schema are compared:
-chain, action, protocol, source network and destination port. Additional
-selectors in observed rules are not silently ignored; they make the result
-inconclusive because the current policy schema cannot express them.
+chain, action, protocol, source network, destination port and connection
+states. Additional selectors in observed rules are not silently ignored;
+they make the result inconclusive when the policy cannot express them.
 """
 from __future__ import annotations
 
@@ -57,6 +57,29 @@ def _protocol_relation(expected: str, observed: str | None) -> str:
     if observed_any:
         return "observed_superset"
     return "equal" if expected == observed else "disjoint"
+
+def _connection_state_relation(
+    policy_rule: dict[str, Any],
+    observed: RuleIR,
+) -> str:
+    """Compare the allowed connection-state sets; an omitted policy field means any state."""
+    expected_values = policy_rule.get("connection_states")
+    expected = set(expected_values or [])
+    actual = set(observed.connection_states)
+
+    if not expected:
+        return "equal" if not actual else "observed_subset"
+    if not actual:
+        return "observed_superset"
+    if actual == expected:
+        return "equal"
+    if actual.issubset(expected):
+        return "observed_subset"
+    if expected.issubset(actual):
+        return "observed_superset"
+    if actual.isdisjoint(expected):
+        return "disjoint"
+    return "partial"
 
 
 def _ranges_overlap(
@@ -129,6 +152,7 @@ def _scope_relation(policy_rule: dict[str, Any], observed: RuleIR) -> str:
             policy_rule.get("destination_port"),
             observed.destination_ports,
         ),
+        _connection_state_relation(policy_rule, observed),
     )
     if "disjoint" in relations:
         return "disjoint"
@@ -154,8 +178,6 @@ def _unmodelled_selectors(rule: RuleIR) -> list[str]:
         selectors.append("source_ports")
     if rule.either_ports:
         selectors.append("either_ports")
-    if rule.connection_states:
-        selectors.append("connection_states")
     if rule.fragment_only is not None:
         selectors.append("fragment_only")
     if rule.tcp_syn_only is not None:
@@ -285,7 +307,7 @@ def _compare_one_rule(
             continue
 
         relation = _scope_relation(policy_rule, observed)
-        if relation != "disjoint":
+        if relation != "disjoint" or observed.negated_conditions:
             candidates.append((observed, relation))
 
     if not candidates:
@@ -367,8 +389,8 @@ def _compare_one_rule(
     elif relation == "equal":
         status = "MATCHED"
         reason = (
-            "Cadeia, ação, protocolo, origem e porta de destino correspondem "
-            "exatamente nos campos suportados."
+            "Cadeia, ação, protocolo, origem, porta de destino e estados de "
+            "ligação correspondem exatamente nos campos suportados."
         )
     elif relation == "observed_superset":
         status = "BROADER_SCOPE"
@@ -408,7 +430,8 @@ def compare_policy_rules_to_snapshots(
 ) -> dict[str, Any]:
     """Compare policy rules with IPv4/IPv6 snapshots without applying changes.
 
-    The comparison is rule-level and selector-based. It does not model
+    The comparison is rule-level and selector-based, including supported
+    connection-state sets. It does not model
     first-match order, aggregate multiple rules to cover one policy rule,
     user-chain control flow, or real packet reachability.
     """
