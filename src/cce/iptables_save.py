@@ -516,7 +516,7 @@ def analyze_iptables_saves(
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
-        "scope": "base_policies_structure_and_rule_ir_inventory",
+        "scope": "base_policies_and_supported_rule_semantics",
         "summary": {
             "families_total": len(families),
             "chains_total": total_chains,
