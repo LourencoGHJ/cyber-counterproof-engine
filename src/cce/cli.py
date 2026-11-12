@@ -468,7 +468,11 @@ def main():
                 f"Divergências: "
                 f"{summary['base_policy_mismatches']} | "
                 f"Riscos candidatos: "
-                f"{summary['rule_risk_candidates']}"
+                f"{summary['rule_risk_candidates']} | "
+                f"Regras comparadas: "
+                f"{summary['rules_semantically_compared']} | "
+                f"Drifts de regras: "
+                f"{summary['semantic_rule_drifts']}"
             )
             for candidate in result["rule_risk_candidates"]:
                 print(
