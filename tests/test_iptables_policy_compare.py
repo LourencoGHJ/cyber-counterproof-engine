@@ -219,3 +219,13 @@ def test_reject_rule_with_broader_scope_is_reported_as_broader_blocking():
 
     assert report["comparisons"][0]["status"] == "BROADER_SCOPE"
     assert report["comparisons"][0]["impact"] == "broader_blocking_than_policy"
+
+
+
+def test_return_target_does_not_masquerade_as_user_chain_transfer():
+    report = compare(
+        baseline_rule(),
+        snapshot("-A INPUT -j RETURN\n"),
+    )
+
+    assert report["comparisons"][0]["status"] == "MISSING"
