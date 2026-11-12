@@ -410,6 +410,7 @@ def analyze_firewall_snapshots(
         "policy_rule_drifts": 0,
         "policy_rule_inconclusive": 0,
         "policy_drift_findings": 0,
+        "policy_comparison_findings": 0,
     }
     findings: list[dict[str, Any]] = []
 
@@ -519,6 +520,11 @@ def analyze_firewall_snapshots(
         )
         summary["policy_drift_findings"] = (
             policy_summary["policy_drift_findings"]
+        )
+        summary["policy_comparison_findings"] = policy_summary["findings_total"]
+        findings.extend(
+            {"category": "policy_comparison", **finding}
+            for finding in policy_comparison["findings"]
         )
         if policy_summary["policy_drift_findings"]:
             report["status"] = "DRIFT"
