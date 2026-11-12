@@ -200,3 +200,22 @@ def test_user_chain_transfer_prevents_proving_rule_absence():
 
     assert report["comparisons"][0]["status"] == "INCONCLUSIVE"
     assert "não segue esse fluxo" in report["comparisons"][0]["reason"]
+
+
+
+def test_missing_reject_rule_is_reported_as_potential_exposure():
+    report = compare(
+        baseline_rule(action="reject"),
+        snapshot(""),
+    )
+
+    assert report["comparisons"][0]["status"] == "MISSING"
+    assert report["comparisons"][0]["impact"] == "potential_exposure"
+
+
+def test_reject_rule_with_broader_scope_is_reported_as_broader_blocking():
+    text = snapshot("-A INPUT -p tcp --dport 443 -j REJECT\n")
+    report = compare(baseline_rule(action="reject"), text)
+
+    assert report["comparisons"][0]["status"] == "BROADER_SCOPE"
+    assert report["comparisons"][0]["impact"] == "broader_blocking_than_policy"
