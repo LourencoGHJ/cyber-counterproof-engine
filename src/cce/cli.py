@@ -170,6 +170,12 @@ def make_parser():
         help="Confirma que o acesso remoto está atrás de VPN ou proxy HTTPS.",
     )
 
+    live_dashboard.add_argument(
+        "--sudo-readonly",
+        action="store_true",
+        help="Usa sudo -n apenas para os comandos fixos de listagem da firewall.",
+    )
+
     add_packet_evaluation_parser(subs)
 
     snapshot_analysis = subs.add_parser(
@@ -484,6 +490,7 @@ def main():
                 allow_remote=args.allow_remote,
                 token_env=args.token_env,
                 trusted_transport=args.trusted_transport,
+                sudo_readonly=args.sudo_readonly,
             )
             return 0
 
