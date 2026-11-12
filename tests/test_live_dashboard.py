@@ -133,6 +133,58 @@ def test_live_collector_auto_collects_iptables_and_native_nftables(
     assert "-A INPUT" not in json.dumps(result)
 
 
+def test_sudo_readonly_executes_only_fixed_listing_commands(tmp_path, monkeypatch):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
+    tools = {
+        "iptables-save": "/usr/sbin/iptables-save",
+        "ip6tables-save": None,
+        "nft": None,
+        "sudo": "/usr/bin/sudo",
+    }
+    monkeypatch.setattr(
+        "cce.live_dashboard.shutil.which",
+        lambda name: tools.get(name),
+    )
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        assert kwargs["shell"] is False if "shell" in kwargs else True
+        return subprocess.CompletedProcess(
+            command, 0, stdout=iptables_snapshot(), stderr=""
+        )
+
+    monkeypatch.setattr("cce.live_dashboard.subprocess.run", fake_run)
+    result = LiveSnapshotCollector(
+        str(policy_path),
+        source="iptables",
+        sudo_readonly=True,
+    ).collect()
+
+    assert calls == [
+        ["/usr/bin/sudo", "-n", "--", "/usr/sbin/iptables-save"]
+    ]
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["source"] == "iptables-save"
+
+
+def test_sudo_readonly_fails_closed_when_sudo_is_unavailable(tmp_path, monkeypatch):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
+    monkeypatch.setattr(
+        "cce.live_dashboard.shutil.which",
+        lambda name: "/usr/sbin/iptables-save" if name == "iptables-save" else None,
+    )
+    result = LiveSnapshotCollector(
+        str(policy_path),
+        source="iptables",
+        sudo_readonly=True,
+    ).collect()
+    assert result["status"] == "ERROR"
+    assert "sudo não foi encontrado" in result["error"]
+
+
 def test_live_collector_uses_nftables_json_when_iptables_is_unavailable(
     tmp_path, monkeypatch
 ):
