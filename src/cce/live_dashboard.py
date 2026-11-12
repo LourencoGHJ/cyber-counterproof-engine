@@ -119,21 +119,6 @@ class LiveSnapshotCollector:
         self.timeout_seconds = timeout_seconds
         self.sudo_readonly = sudo_readonly
 
-    def _resolve_source(self) -> str:
-        if self.requested_source != "auto":
-            return self.requested_source
-        # Preferimos iptables-save quando está instalado porque a análise
-        # semântica do CCE para esta fonte é mais profunda. Caso contrário,
-        # usamos nftables com o âmbito atualmente suportado pelo adaptador live.
-        if shutil.which("iptables-save"):
-            return "iptables"
-        if shutil.which("nft"):
-            return "nftables"
-        raise RuntimeError(
-            "Não foi encontrado iptables-save nem nft. "
-            "Executa o serviço no host Linux que gere a firewall."
-        )
-
     def _run_read_only(self, executable: str, args: list[str]) -> subprocess.CompletedProcess[str]:
         command = [executable, *args]
         if self.sudo_readonly:
