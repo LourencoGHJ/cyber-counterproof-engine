@@ -422,11 +422,15 @@ def compare_policy_rules_to_snapshots(
         if family not in {"ipv4", "ipv6"}:
             raise ValueError("A família tem de ser ipv4 ou ipv6.")
         try:
+            structural = parse_iptables_save(snapshot_text, family)
+            if structural["summary"]["malformed_lines"] > 0:
+                raise ValueError(
+                    "O snapshot contém linhas estruturalmente malformadas."
+                )
             parsed_by_family[family] = parse_iptables_rules_ir(
                 snapshot_text,
                 family,
             )
-            structural = parse_iptables_save(snapshot_text, family)
             filter_chains_by_family[family] = {
                 chain["name"]
                 for chain in structural["chains"]
