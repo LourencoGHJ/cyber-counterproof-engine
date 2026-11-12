@@ -105,6 +105,12 @@ Build the image locally and confirm that the CLI starts:
 
 The image runs as UID 10001 rather than root. To run an audit, mount input files read-only and provide a writable output directory. Run the container with least privilege and only mount files needed for the task. Image vulnerability scanning runs in the container-security workflow; the workflow does not publish the image to a registry.
 
+Compare declarative policy rules with IPv4/IPv6 iptables-save snapshots:
+
+    cce compare-iptables-save --policy config/policy.json --ipv4 /path/to/iptables.save --ipv6 /path/to/ip6tables.save --output reports/semantic-comparison.json
+
+Rule comparison currently supports the policy fields `chain`, `action`, `protocol`, `source` and `destination_port`. It classifies exact matches, missing rules, action mismatches, broader scopes, narrower scopes and partial overlaps. A broader ACCEPT rule or a narrower DROP rule is flagged as a potential exposure; the inverse cases are classified as scope/coverage deviations. Extra observed selectors that the policy schema cannot express (for example connection state, destination address, interfaces, source ports or TCP flags), multiple candidates, and partially interpreted rules remain `INCONCLUSIVE`. The `service` field is treated as a descriptive label, not translated into firewall semantics. Comparison is per rule and does not model first-match order, user-chain reachability, NAT, routing, or aggregation of multiple rules. Even exact supported-field matches do not cause a global `PASS`.
+
 The same commands can be run with **python -m cce.cli** after the project is installed in a Python environment.
 
 ## Security scope and limitations

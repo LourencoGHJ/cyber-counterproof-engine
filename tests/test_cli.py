@@ -134,20 +134,25 @@ def test_compare_iptables_save_reports_ssh_candidate(
         ],
     )
 
-    # A análise estrutural continua inconclusiva; o candidato SSH é
-    # acrescentado ao relatório sem alterar artificialmente o estado global.
-    assert main() == 3
+    # A regra HTTPS declarada não existe em nenhum dos dois snapshots.
+    # A análise de SSH é independente e não substitui a comparação semântica.
+    assert main() == 1
 
     output = capsys.readouterr().out
-    assert "CCE: INCONCLUSIVE" in output
+    assert "CCE: DRIFT" in output
+    assert "Drifts de regras: 2" in output
+    assert "[MISSING] R001" in output
     assert "Riscos candidatos: 1" in output
     assert "possível SSH/TCP/22" in output
 
     report = json.loads(output_file.read_text(encoding="utf-8"))
     assert report["result"]["summary"]["rule_risk_candidates"] == 1
     assert report["result"]["rule_risk_candidates"][0]["family"] == "ipv4"
+    assert report["result"]["summary"]["rules_semantically_compared"] == 2
+    assert report["result"]["summary"]["semantic_rule_drifts"] == 2
+    assert report["result"]["rule_policy_comparison"]["summary"]["rules_missing"] == 2
 
-def test_compare_iptables_save_creates_inconclusive_report(
+def test_compare_iptables_save_reports_missing_policy_rules_as_drift(
     tmp_path, monkeypatch, capsys
 ):
     policy_file = tmp_path / "policy.json"
@@ -179,10 +184,13 @@ def test_compare_iptables_save_creates_inconclusive_report(
         ],
     )
 
-    assert main() == 3
-    assert "CCE: INCONCLUSIVE" in capsys.readouterr().out
+    assert main() == 1
+    output = capsys.readouterr().out
+    assert "CCE: DRIFT" in output
+    assert "[MISSING] R001" in output
 
     report = json.loads(output_file.read_text(encoding="utf-8"))
-    assert report["result"]["status"] == "INCONCLUSIVE"
+    assert report["result"]["status"] == "DRIFT"
     assert report["result"]["summary"]["base_policies_matched"] == 4
-    assert report["result"]["summary"]["rules_semantically_compared"] == 0
+    assert report["result"]["summary"]["rules_semantically_compared"] == 2
+    assert report["result"]["summary"]["semantic_rule_drifts"] == 2

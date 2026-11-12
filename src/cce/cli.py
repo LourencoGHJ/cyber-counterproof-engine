@@ -468,7 +468,11 @@ def main():
                 f"Divergências: "
                 f"{summary['base_policy_mismatches']} | "
                 f"Riscos candidatos: "
-                f"{summary['rule_risk_candidates']}"
+                f"{summary['rule_risk_candidates']} | "
+                f"Regras comparadas: "
+                f"{summary['rules_semantically_compared']} | "
+                f"Drifts de regras: "
+                f"{summary['semantic_rule_drifts']}"
             )
             for candidate in result["rule_risk_candidates"]:
                 print(
@@ -476,6 +480,20 @@ def main():
                     f"{candidate['code']}: possível SSH/TCP/22 "
                     f"na cadeia {candidate['chain']} "
                     f"(linha {candidate['line_number']})"
+                )
+
+            for comparison in result["rule_policy_comparison"]["findings"]:
+                location = (
+                    f"{comparison['family']}/{comparison['chain']}"
+                )
+                if comparison["observed_lines"]:
+                    location += (
+                        f":{','.join(map(str, comparison['observed_lines']))}"
+                    )
+                print(
+                    f"[{comparison['status']}] "
+                    f"{comparison['rule_id']} ({location}) — "
+                    f"{comparison['reason']}"
                 )
 
             print(f"Relatório: {args.output}")

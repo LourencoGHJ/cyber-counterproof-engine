@@ -497,13 +497,26 @@ def analyze_iptables_saves(
         ir_partially_interpreted += family_summary["rules_partially_interpreted"]
         ir_unparsed += family_summary["rules_unparsed"]
 
-    # Sem regras comparadas semanticamente com a política, nunca declaramos PASS.
-    status = "DRIFT" if findings else "INCONCLUSIVE"
+    from cce.iptables_policy_compare import compare_policy_rules_to_snapshots
+
+    rule_policy_comparison = compare_policy_rules_to_snapshots(
+        policy,
+        (("ipv4", ipv4_text), ("ipv6", ipv6_text)),
+    )
+    rule_comparison_summary = rule_policy_comparison["summary"]
+
+    # A comparação é deliberadamente por regra e por campos suportados.
+    # Mesmo sem drift, não declara PASS porque não modela ordem nem alcance real.
+    status = (
+        "DRIFT"
+        if findings or rule_comparison_summary["conclusive_rule_drifts"]
+        else "INCONCLUSIVE"
+    )
 
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
-        "scope": "base_policies_structure_and_rule_ir_inventory",
+        "scope": "base_policies_and_supported_rule_semantics",
         "summary": {
             "families_total": len(families),
             "chains_total": total_chains,
@@ -514,7 +527,10 @@ def analyze_iptables_saves(
             "unresolved_targets": unresolved,
             "chains_without_explicit_path": chains_without_path,
             "malformed_lines": malformed,
-            "rules_semantically_compared": 0,
+            "rules_semantically_compared": rule_comparison_summary["rules_semantically_compared"],
+            "semantic_rule_drifts": rule_comparison_summary["conclusive_rule_drifts"],
+            "semantic_rule_matches": rule_comparison_summary["rules_matched"],
+            "semantic_rule_inconclusive": rule_comparison_summary["rules_inconclusive"],
             "rules_ir_normalized": (
                 ir_fully_interpreted + ir_partially_interpreted
             ),
@@ -523,6 +539,7 @@ def analyze_iptables_saves(
             "rules_ir_unparsed": ir_unparsed,
         },
         "findings": findings,
+        "rule_policy_comparison": rule_policy_comparison,
         "rule_ir": {
             "schema_version": "1.0",
             "families": ir_family_summaries,
@@ -532,8 +549,9 @@ def analyze_iptables_saves(
             "A comparação de políticas abrange apenas INPUT, OUTPUT e FORWARD na tabela filter.",
             "A IR normaliza condições reconhecidas, mas não calcula ainda o resultado efetivo do tráfego.",
             "Regras parcialmente interpretadas ou não normalizadas não são consideradas semanticamente validadas.",
-            "As regras individuais ainda não são comparadas semanticamente com a política JSON.",
-            "As opções e respetivos valores não são avaliados para decidir se um fluxo é permitido.",
+            "A comparação semântica de regras cobre apenas os campos suportados pelo esquema atual da política.",
+            "A comparação é por regra e não avalia ordem first-match nem agrega várias regras para satisfazer uma regra declarada.",
+            "Condições de destino, interfaces, portas de origem, estado de ligação, fragmentos e flags TCP adicionais mantêm a comparação inconclusiva.",
             "Targets desconhecidos ficam inconclusivos até serem identificados.",
             "Os snapshots podem estar desatualizados relativamente ao estado atual.",
             "Não foi executado nenhum comando para alterar a firewall.",
