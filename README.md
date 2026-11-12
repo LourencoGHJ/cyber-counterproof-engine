@@ -80,7 +80,7 @@ Start the live firewall dashboard on the Linux host whose firewall is being insp
 
     cce serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 1000
 
-Open **http://127.0.0.1:8765/** in a browser. With `--source auto`, the collector reads `iptables-save`, `ip6tables-save`, and `nft -j list ruleset) using fixed read-only subprocess arguments. Completed analyses are pushed to connected browsers with Server-Sent Events (SSE); the page does not need to reload.
+Open **http://127.0.0.1:8765/** in a browser. With `--source auto`, the collector reads `iptables-save`, `ip6tables-save`, and `nft -j list ruleset using fixed read-only subprocess arguments. Completed analyses are pushed to connected browsers with Server-Sent Events (SSE); the page does not need to reload.
 
 The dashboard presents the latest status, separate iptables/nftables counts, findings, collection duration, source availability, and analysis limitations. The iptables adapter uses the CCE semantic snapshot analysis. The nftables adapter currently compares base-chain policies and structural inventory; it does not claim full nftables rule-semantic coverage. Results from the two sources are kept separate because an iptables-nft compatibility ruleset may overlap with native nftables rules.
 
