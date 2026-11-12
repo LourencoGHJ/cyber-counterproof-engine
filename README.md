@@ -90,6 +90,12 @@ Analyze a synthetic iptables-save snapshot for duplicate, redundant, shadowed, a
 
 The analysis compares only fully interpreted terminal rules within the same chain of the `filter` table. It reports full shadowing as proven only when an earlier rule covers every packet that could match a later rule. Opposing verdicts that may match some of the same traffic, without proven full coverage, are reported as potential overlaps. It also detects supported TCP flag conditions that are impossible to satisfy and reports them as unmatchable rules, separately from shadowed rules. Partially interpreted and non-terminal rules are counted but excluded. Exit code 0 means no findings, 1 means findings were detected, and 2 means invalid or malformed input. The report omits raw network/interface selectors and original rule text; it retains the snapshot path and SHA-256 evidence hash.
 
+Run a consolidated offline analysis of one or both firewall families:
+
+    cce analyze-snapshot --ipv4 /path/to/iptables.save --ipv6 /path/to/ip6tables.save --output reports/snapshot-analysis.json
+
+The consolidated report combines structural inventory, IR interpretation metrics, heuristic SSH/TCP/22 candidates, and supported terminal-rule conflict analysis. Either `--ipv4` or `--ipv6` may be omitted, but an omitted family is explicitly reported as not analysed. The overall status is always `INCONCLUSIVE`: this command does not compare a policy baseline or determine real traffic behaviour. Exit code 1 indicates static rule-conflict findings, 3 indicates that the report was generated but the overall assessment remains inconclusive, and 2 indicates invalid input. Malformed snapshots retain their structural summary, while semantic analyses are skipped rather than producing potentially misleading results. The report does not include original rule text or network/port selector values.
+
 ## Build and smoke-test the Docker image
 
 Build the image locally and confirm that the CLI starts:
