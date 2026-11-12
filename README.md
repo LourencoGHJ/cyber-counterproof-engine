@@ -22,6 +22,7 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes, including SYN-only matching, from synthetic fixtures.
 - **Rule conflict analysis:** detects exact duplicates, redundant rules, proven shadowing, potential verdict overlaps, and TCP rules whose flag conditions can never match.
 - **Chain-flow analysis:** maps explicit iptables jump/goto references, structural reachability from base chains, unresolved targets, and potential recursive chain components.
+- **Policy-aware consolidated analysis:** optionally compares declared base-chain policies and supported rule selectors with supplied IPv4/IPv6 snapshots, retaining policy evidence hashes.
 - **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
 
 ## DevSecOps in the development lifecycle
@@ -101,7 +102,15 @@ Run a consolidated offline analysis of one or both firewall families:
 
     cce analyze-snapshot --ipv4 /path/to/iptables.save --ipv6 /path/to/ip6tables.save --output reports/snapshot-analysis.json
 
-The consolidated report combines structural inventory, IR interpretation metrics, heuristic SSH/TCP/22 candidates, and supported terminal-rule conflict analysis. It also includes a structural chain-flow graph with explicit references, reachability and potential recursion findings. Either `--ipv4` or `--ipv6` may be omitted, but an omitted family is explicitly reported as not analysed. The overall status is always `INCONCLUSIVE`: this command does not compare a policy baseline or determine real traffic behaviour. Exit code 1 indicates static rule-conflict findings, 3 indicates that the report was generated but the overall assessment remains inconclusive, and 2 indicates invalid input. Malformed snapshots retain their structural summary, while semantic analyses are skipped rather than producing potentially misleading results. The report does not include original rule text or network/port selector values.
+Optionally compare the snapshots with the declarative policy:
+
+    cce analyze-snapshot --policy config/policy.json --ipv4 /path/to/iptables.save --ipv6 /path/to/ip6tables.save --output reports/full-security-audit.json
+
+The consolidated report combines structural inventory, IR interpretation metrics, heuristic SSH/TCP/22 candidates, supported terminal-rule conflict analysis, and a structural chain-flow graph. Either `--ipv4` or `--ipv6` may be omitted, but an omitted family is explicitly reported as not analysed.
+
+When `--policy` is supplied, CCE validates the policy, compares the declared INPUT/OUTPUT/FORWARD base-chain policies for the supplied families, and reuses the supported semantic rule comparison for each supplied snapshot. The report includes policy and snapshot SHA-256 evidence hashes, policy comparison counts, and consolidated policy findings. A conclusive policy mismatch changes the overall status to `DRIFT`; otherwise the overall assessment remains `INCONCLUSIVE`, including when all supported fields match. A match does not prove actual packet reachability or full firewall compliance.
+
+Exit code 1 indicates static rule-conflict findings or conclusive policy drift, 3 indicates that the report was generated without conclusive policy drift but the overall assessment remains inconclusive, and 2 indicates invalid input. Malformed snapshots retain their structural summary; policy comparisons for the affected family become inconclusive instead of claiming that expected rules are missing. The report does not include original rule text or network/port selector values.
 
 ## Build and smoke-test the Docker image
 
