@@ -72,7 +72,7 @@ class FakeCollector:
         }
 
 
-def test_live_collector_auto_prefers_iptables_save_when_available(
+def test_live_collector_auto_collects_iptables_and_native_nftables(
     tmp_path, monkeypatch
 ):
     policy_path = tmp_path / "policy.json"
@@ -90,26 +90,44 @@ def test_live_collector_auto_prefers_iptables_save_when_available(
 
     calls = []
 
+    nft_json = {
+        "nftables": [
+            {"chain": {"family": "ip", "table": "filter", "name": "INPUT", "type": "filter", "hook": "input", "prio": 0, "policy": "drop"}},
+            {"chain": {"family": "ip", "table": "filter", "name": "OUTPUT", "type": "filter", "hook": "output", "prio": 0, "policy": "accept"}},
+            {"chain": {"family": "ip", "table": "filter", "name": "FORWARD", "type": "filter", "hook": "forward", "prio": 0, "policy": "drop"}},
+            {"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "expr": [{"accept": None}]}},
+        ]
+    }
+
     def fake_run(command, **kwargs):
         calls.append(command)
         assert kwargs["capture_output"] is True
         assert kwargs["text"] is True
         assert kwargs["check"] is False
+        if command == ["/usr/sbin/iptables-save"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout=iptables_snapshot(), stderr=""
+            )
+        assert command == ["/usr/sbin/nft", "-j", "list", "ruleset"]
         return subprocess.CompletedProcess(
-            command, 0, stdout=iptables_snapshot(), stderr=""
+            command, 0, stdout=json.dumps(nft_json), stderr=""
         )
 
     monkeypatch.setattr("cce.live_dashboard.subprocess.run", fake_run)
 
     result = LiveSnapshotCollector(str(policy_path), source="auto").collect()
 
-    assert calls == [["/usr/sbin/iptables-save"]]
-    assert result["source"] == "iptables-save"
+    assert calls == [
+        ["/usr/sbin/iptables-save"],
+        ["/usr/sbin/nft", "-j", "list", "ruleset"],
+    ]
+    assert result["source"] == "iptables-save + nftables"
     assert result["status"] == "INCONCLUSIVE"
     assert result["partial"] is True
-    assert result["summary"]["rules_total"] == 1
+    assert result["summary"]["iptables_rules_total"] == 1
+    assert result["summary"]["nftables_base_chains"] == 3
     assert "ip6tables-save não está instalado" in " ".join(result["warnings"])
-    assert "text" not in result
+    assert set(result["source_results"]) == {"iptables", "nftables"}
     assert "-A INPUT" not in json.dumps(result)
 
 
@@ -143,9 +161,8 @@ def test_live_collector_uses_nftables_json_when_iptables_is_unavailable(
     result = LiveSnapshotCollector(str(policy_path), source="auto").collect()
 
     assert result["source"] == "nftables"
-    assert result["scope"] == "base_chain_policies_only"
-    assert result["summary"]["base_chains"] == 3
-    assert result["partial"] is True
+    assert result["summary"]["nftables_base_chains"] == 3
+    assert result["partial"] is False
     assert result["evidence"]["nftables"]["sha256"]
 
 
