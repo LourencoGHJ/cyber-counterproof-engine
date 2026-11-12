@@ -482,6 +482,20 @@ def main():
                     f"(linha {candidate['line_number']})"
                 )
 
+            for comparison in result["rule_policy_comparison"]["findings"]:
+                location = (
+                    f"{comparison['family']}/{comparison['chain']}"
+                )
+                if comparison["observed_lines"]:
+                    location += (
+                        f":{','.join(map(str, comparison['observed_lines']))}"
+                    )
+                print(
+                    f"[{comparison['status']}] "
+                    f"{comparison['rule_id']} ({location}) — "
+                    f"{comparison['reason']}"
+                )
+
             print(f"Relatório: {args.output}")
 
             if result["status"] == "DRIFT":
