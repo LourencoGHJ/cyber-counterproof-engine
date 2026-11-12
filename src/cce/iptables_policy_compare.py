@@ -265,6 +265,12 @@ def _compare_one_rule(
     partial_rules = [
         rule for rule in chain_rules if rule.interpretation != "complete"
     ]
+    chain_transfers = [
+        rule for rule in chain_rules
+        if rule.interpretation == "complete"
+        and rule.target_operation in {"jump", "goto"}
+        and (rule.target or "").upper() not in TERMINAL_VERDICTS
+    ]
     candidates: list[tuple[RuleIR, str]] = []
 
     for observed in chain_rules:
@@ -280,18 +286,26 @@ def _compare_one_rule(
             candidates.append((observed, relation))
 
     if not candidates:
-        if partial_rules:
+        if partial_rules or chain_transfers:
+            uncertain_lines = sorted(
+                rule.line_number for rule in (*partial_rules, *chain_transfers)
+            )
+            reason = (
+                "Existem regras parcialmente interpretadas na cadeia; "
+                "não é possível provar que a regra esperada esteja ausente."
+                if partial_rules
+                else
+                "A cadeia transfere a avaliação para uma chain de utilizador; "
+                "a comparação atual não segue esse fluxo e não pode provar ausência."
+            )
             return _comparison_record(
                 rule_id=rule_id,
                 family=family,
                 chain=chain,
                 status="INCONCLUSIVE",
                 expected_action=action,
-                observed_lines=[rule.line_number for rule in partial_rules],
-                reason=(
-                    "Existem regras parcialmente interpretadas na cadeia; "
-                    "não é possível provar que a regra esperada esteja ausente."
-                ),
+                observed_lines=uncertain_lines,
+                reason=reason,
             )
         return _comparison_record(
             rule_id=rule_id,
