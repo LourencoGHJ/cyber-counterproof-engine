@@ -9,6 +9,7 @@ from cce.dashboard import generate_dashboard
 from cce.drift import compare_policies
 from cce.engine import analyze
 from cce.live import analyze_live_ruleset
+from cce.live_dashboard import serve_live_dashboard
 from cce.iptables_save import analyze_iptables_saves
 from cce.iptables_risk import find_ssh_rule_candidates
 from cce.models import (
@@ -126,6 +127,41 @@ def make_parser():
         "--output",
         default="reports/dashboard.html",
         help="Caminho do dashboard HTML gerado.",
+    )
+
+    live_dashboard = subs.add_parser(
+        "serve-dashboard",
+        help="Servir o dashboard read-only com atualizações SSE em tempo real.",
+    )
+    live_dashboard.add_argument("--policy", required=True)
+    live_dashboard.add_argument(
+        "--source",
+        choices=("auto", "iptables", "nftables"),
+        default="auto",
+        help="Fonte de recolha; auto prefere iptables-save e usa nftables como fallback.",
+    )
+    live_dashboard.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="Intervalo de recolha em segundos (mínimo: 1).",
+    )
+    live_dashboard.add_argument("--host", default="127.0.0.1")
+    live_dashboard.add_argument("--port", type=int, default=8765)
+    live_dashboard.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Permite bind não-local; exige token e transporte privado/HTTPS.",
+    )
+    live_dashboard.add_argument(
+        "--token-env",
+        default="CCE_DASHBOARD_TOKEN",
+        help="Variável de ambiente com token remoto (mínimo: 32 caracteres).",
+    )
+    live_dashboard.add_argument(
+        "--trusted-transport",
+        action="store_true",
+        help="Confirma que o acesso remoto está atrás de VPN ou proxy HTTPS.",
     )
 
     live_dashboard = subs.add_parser(
@@ -459,6 +495,19 @@ def main():
         if args.command == "dashboard":
             output = generate_dashboard(args.history, args.output)
             print(f"Dashboard gerado: {output}")
+            return 0
+
+        if args.command == "serve-dashboard":
+            serve_live_dashboard(
+                policy_path=args.policy,
+                host=args.host,
+                port=args.port,
+                source=args.source,
+                interval_seconds=args.interval,
+                allow_remote=args.allow_remote,
+                token_env=args.token_env,
+                trusted_transport=args.trusted_transport,
+            )
             return 0
 
         if args.command == "serve-dashboard":
