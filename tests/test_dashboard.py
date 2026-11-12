@@ -55,7 +55,7 @@ def test_dashboard_shows_latest_assessment_findings_and_history(tmp_path):
     assert "Execuções recentes" in content
     assert "DRIFT" in content
     assert "PASS" in content
-    assert "allow-ssh-lab" not in content
+    assert "allow-ssh-lab" in content  # Available in the expandable historical execution details.
     assert "Test error" in content
     assert "CYBER COUNTERPROOF" not in content
     assert "Limpar filtros" in content
