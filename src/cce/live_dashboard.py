@@ -256,7 +256,7 @@ class LiveSnapshotCollector:
         for source, source_result in results.items():
             warnings.extend(source_result.get("warnings", []))
             if source_result.get("partial"):
-                warnings.append(f"A recolha da fonte {source} é parcial.")
+                warnings.append(f"A análise da fonte {source} tem cobertura limitada ao âmbito suportado.")
 
         findings: list[dict[str, Any]] = []
         limitations: list[str] = []
