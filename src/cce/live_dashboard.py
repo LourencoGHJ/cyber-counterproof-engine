@@ -77,6 +77,7 @@ class LiveSnapshotCollector:
         policy_path: str,
         source: str = "auto",
         timeout_seconds: float = 8.0,
+        sudo_readonly: bool = False,
     ) -> None:
         if source not in {"auto", "iptables", "nftables"}:
             raise ValueError("source tem de ser auto, iptables ou nftables.")
@@ -91,6 +92,7 @@ class LiveSnapshotCollector:
 
         self.requested_source = source
         self.timeout_seconds = timeout_seconds
+        self.sudo_readonly = sudo_readonly
 
     def _resolve_source(self) -> str:
         if self.requested_source != "auto":
@@ -109,6 +111,13 @@ class LiveSnapshotCollector:
 
     def _run_read_only(self, executable: str, args: list[str]) -> subprocess.CompletedProcess[str]:
         command = [executable, *args]
+        if self.sudo_readonly:
+            sudo = shutil.which("sudo")
+            if not sudo:
+                raise RuntimeError(
+                    "Foi pedido sudo read-only, mas o comando sudo não foi encontrado."
+                )
+            command = [sudo, "-n", "--", *command]
         try:
             result = subprocess.run(
                 command,
@@ -818,12 +827,14 @@ def serve_live_dashboard(
     token_env: str = "CCE_DASHBOARD_TOKEN",
     trusted_transport: bool = False,
     timeout_seconds: float = 8.0,
+    sudo_readonly: bool = False,
 ) -> None:
     """Inicia o recolhedor read-only e o servidor HTTP/SSE."""
     collector = LiveSnapshotCollector(
         policy_path,
         source=source,
         timeout_seconds=timeout_seconds,
+        sudo_readonly=sudo_readonly,
     )
     token = os.environ.get(token_env)
     state = LiveState(collector, interval_seconds)
