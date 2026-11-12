@@ -32,6 +32,7 @@ def valid_policy():
                 "protocol": "tcp",
                 "source": "any",
                 "destination_port": 443,
+                "service": "https",
             }
         ],
     }
