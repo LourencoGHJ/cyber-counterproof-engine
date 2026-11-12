@@ -146,7 +146,7 @@ def full_policy(rule):
 
 def test_semantic_comparison_is_integrated_into_iptables_save_analysis():
     ipv4 = snapshot(
-        "-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\\n"
+        "-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\n"
     )
     ipv6 = snapshot("")
 
@@ -168,7 +168,7 @@ def test_semantic_comparison_is_integrated_into_iptables_save_analysis():
 
 
 def test_semantic_rule_drift_changes_integrated_status_to_drift():
-    ipv4 = snapshot("-A INPUT -p tcp --dport 443 -j ACCEPT\\n")
+    ipv4 = snapshot("-A INPUT -p tcp --dport 443 -j ACCEPT\n")
     ipv6 = snapshot("")
 
     result = analyze_iptables_saves(
@@ -182,3 +182,21 @@ def test_semantic_rule_drift_changes_integrated_status_to_drift():
     assert result["rule_policy_comparison"]["findings"][0]["status"] == (
         "BROADER_SCOPE"
     )
+
+
+
+def test_user_chain_transfer_prevents_proving_rule_absence():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP-SERVICES - [0:0]\n"
+        "-A INPUT -j APP-SERVICES\n"
+        "-A APP-SERVICES -p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+    report = compare(baseline_rule(), text)
+
+    assert report["comparisons"][0]["status"] == "INCONCLUSIVE"
+    assert "não segue esse fluxo" in report["comparisons"][0]["reason"]
