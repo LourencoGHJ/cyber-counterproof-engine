@@ -162,7 +162,8 @@ def test_live_collector_uses_nftables_json_when_iptables_is_unavailable(
 
     assert result["source"] == "nftables"
     assert result["summary"]["nftables_base_chains"] == 3
-    assert result["partial"] is False
+    assert result["partial"] is True
+    assert "iptables não foi recolhido" in " ".join(result["warnings"])
     assert result["evidence"]["nftables"]["sha256"]
 
 
@@ -174,7 +175,8 @@ def test_live_collector_reports_missing_tools_as_error(tmp_path, monkeypatch):
     result = LiveSnapshotCollector(str(policy_path), source="auto").collect()
 
     assert result["status"] == "ERROR"
-    assert "iptables-save nem nft" in result["error"]
+    assert "iptables-save não está instalado" in result["error"]
+    assert "Comando nft não encontrado" in result["error"]
 
 
 def test_live_collector_reports_permission_errors_without_claiming_safe_state(
