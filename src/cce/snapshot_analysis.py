@@ -14,6 +14,8 @@ from cce.iptables_risk import find_ssh_rule_candidates
 from cce.iptables_save import parse_iptables_save
 from cce.policy_conflicts import analyze_iptables_rule_conflicts
 from cce.iptables_chain_flow import analyze_iptables_chain_flow
+from cce.iptables_policy_compare import compare_policy_rules_to_snapshots
+from cce.models import validate_policy
 
 
 ENGINE_NAME = "Cyber Counterproof Engine"
@@ -76,6 +78,166 @@ def _skipped_analysis(reason: str) -> dict[str, Any]:
         "findings": [],
     }
 
+
+
+def _build_policy_comparison(
+    policy: dict[str, Any],
+    families: list[dict[str, Any]],
+    snapshots: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    """Compare declared base-chain policies and supported rules per supplied family."""
+    base_policy_comparisons: list[dict[str, Any]] = []
+    base_fields = (
+        ("INPUT", "input_policy"),
+        ("OUTPUT", "output_policy"),
+        ("FORWARD", "forward_policy"),
+    )
+
+    for family_report in families:
+        family = family_report["family"]
+        structural = family_report["structural_analysis"]
+        malformed = structural["summary"]["malformed_lines"] > 0
+        chains = structural["chains"]
+
+        for chain_name, policy_field in base_fields:
+            if policy_field not in policy:
+                continue
+
+            expected = policy[policy_field].upper()
+            observed_chain = next(
+                (
+                    item for item in chains
+                    if item["table"] == "filter"
+                    and item["name"] == chain_name
+                ),
+                None,
+            )
+
+            if malformed:
+                status = "INCONCLUSIVE"
+                observed = (
+                    observed_chain["policy"] if observed_chain else None
+                )
+                reason = (
+                    "O snapshot contém linhas malformadas; a política base "
+                    "não pode ser validada com segurança."
+                )
+            elif observed_chain is None:
+                status = "MISSING"
+                observed = None
+                reason = (
+                    "A chain base esperada não foi declarada no snapshot."
+                )
+            else:
+                observed = observed_chain["policy"].upper()
+                if observed == expected:
+                    status = "MATCHED"
+                    reason = (
+                        "A política da chain base corresponde ao valor declarado."
+                    )
+                else:
+                    status = "MISMATCH"
+                    reason = (
+                        "A política da chain base difere do valor declarado."
+                    )
+
+            base_policy_comparisons.append(
+                {
+                    "family": family,
+                    "table": "filter",
+                    "chain": chain_name,
+                    "policy_field": policy_field,
+                    "expected": expected,
+                    "observed": observed,
+                    "status": status,
+                    "reason": reason,
+                }
+            )
+
+    rule_comparison = compare_policy_rules_to_snapshots(
+        policy,
+        tuple(
+            (family, snapshots[family]["text"])
+            for family in SUPPORTED_FAMILIES
+            if family in snapshots
+        ),
+    )
+    rule_summary = rule_comparison["summary"]
+
+    base_matches = sum(
+        item["status"] == "MATCHED"
+        for item in base_policy_comparisons
+    )
+    base_drifts = sum(
+        item["status"] in {"MISSING", "MISMATCH"}
+        for item in base_policy_comparisons
+    )
+    base_inconclusive = sum(
+        item["status"] == "INCONCLUSIVE"
+        for item in base_policy_comparisons
+    )
+    semantic_drifts = rule_summary["conclusive_rule_drifts"]
+    policy_drifts = base_drifts + semantic_drifts
+
+    findings = [
+        {"category": "base_policy", **item}
+        for item in base_policy_comparisons
+        if item["status"] != "MATCHED"
+    ]
+    findings.extend(
+        {"category": "semantic_rule", **item}
+        for item in rule_comparison["findings"]
+    )
+
+    malformed_families = [
+        item["family"]
+        for item in families
+        if item["structural_analysis"]["summary"]["malformed_lines"] > 0
+    ]
+
+    return {
+        "analysis_status": "partial" if malformed_families else "completed",
+        "policy_id": policy["policy_id"],
+        "status": "DRIFT" if policy_drifts else "INCONCLUSIVE",
+        "summary": {
+            "families_compared": len(families),
+            "families_with_malformed_lines": len(malformed_families),
+            "base_policy_comparisons": len(base_policy_comparisons),
+            "base_policy_matches": base_matches,
+            "base_policy_drifts": base_drifts,
+            "base_policy_inconclusive": base_inconclusive,
+            "semantic_rule_comparisons": rule_summary[
+                "family_rule_comparisons"
+            ],
+            "semantic_rule_matches": rule_summary["rules_matched"],
+            "semantic_rule_drifts": semantic_drifts,
+            "semantic_rule_inconclusive": rule_summary[
+                "rules_inconclusive"
+            ],
+            "semantic_rules_not_applicable": rule_summary[
+                "rules_not_applicable"
+            ],
+            "policy_drift_findings": policy_drifts,
+            "findings_total": len(findings),
+        },
+        "base_policy_comparisons": base_policy_comparisons,
+        "rule_comparison": rule_comparison,
+        "findings": findings,
+        "limitations": [
+            "As políticas base são comparadas apenas para INPUT, OUTPUT e FORWARD na tabela filter, nas famílias fornecidas.",
+            "A comparação de regras cobre apenas chain, action, protocol, source e destination_port.",
+            "O campo service da política é descritivo e não é convertido em condições iptables.",
+            "Regras parcialmente interpretadas, seletores não modelados e múltiplos candidatos permanecem INCONCLUSIVE.",
+            "A comparação é por regra; não agrega regras nem modela ordem first-match, fluxo de user chains, NAT, routing ou alcance real dos pacotes.",
+            "Uma correspondência nos campos suportados não prova conformidade integral nem determina o comportamento do kernel.",
+            "Uma família não fornecida não é considerada em falta; simplesmente não foi avaliada.",
+            "Nenhuma regra da firewall é aplicada, removida ou modificada.",
+        ],
+        "integrity_note": (
+            "A comparação publica identificadores, cadeias, linhas e classificações, "
+            "sem reproduzir seletores IP ou portas das regras."
+        ),
+    }
 
 def _analyse_family(
     family: str,
@@ -176,13 +338,20 @@ def _analyse_family(
 
 def analyze_firewall_snapshots(
     snapshots: dict[str, dict[str, str]],
+    policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Consolidate one or both IPv4/IPv6 iptables-save snapshots.
 
     Each snapshot entry must contain non-empty 'path', 'sha256' and 'text'
-    strings. The overall status is deliberately INCONCLUSIVE because this
-    command does not compare a policy baseline or prove real traffic behaviour.
+    strings. When a policy is supplied, declared base-chain policies and
+    supported rule selectors are compared. A drift is reported, but a clean
+    comparison remains INCONCLUSIVE because real traffic behaviour is not proven.
     """
+    if policy is not None:
+        policy_errors = validate_policy(policy)
+        if policy_errors:
+            raise ValueError("Política inválida: " + "; ".join(policy_errors))
+
     if not isinstance(snapshots, dict) or not snapshots:
         raise ValueError(
             "É necessário fornecer pelo menos um snapshot IPv4 ou IPv6."
@@ -234,6 +403,14 @@ def analyze_firewall_snapshots(
         "potential_chain_cycles": 0,
         "structurally_unreachable_user_chains": 0,
         "unresolved_chain_targets": 0,
+        "policy_base_matches": 0,
+        "policy_base_drifts": 0,
+        "policy_base_inconclusive": 0,
+        "policy_rule_matches": 0,
+        "policy_rule_drifts": 0,
+        "policy_rule_inconclusive": 0,
+        "policy_drift_findings": 0,
+        "policy_comparison_findings": 0,
     }
     findings: list[dict[str, Any]] = []
 
@@ -290,7 +467,7 @@ def analyze_firewall_snapshots(
             for finding in chain_flow_findings
         )
 
-    return {
+    report = {
         "schema_version": "1.0",
         "engine": {"name": ENGINE_NAME, "version": ENGINE_VERSION},
         "operation": "analyze_snapshot",
@@ -323,3 +500,53 @@ def analyze_firewall_snapshots(
             "ficheiros, mas não constituem uma assinatura digital."
         ),
     }
+
+    if policy is not None:
+        policy_comparison = _build_policy_comparison(
+            policy,
+            families,
+            snapshots,
+        )
+        policy_summary = policy_comparison["summary"]
+        summary["policy_base_matches"] = policy_summary["base_policy_matches"]
+        summary["policy_base_drifts"] = policy_summary["base_policy_drifts"]
+        summary["policy_base_inconclusive"] = (
+            policy_summary["base_policy_inconclusive"]
+        )
+        summary["policy_rule_matches"] = policy_summary["semantic_rule_matches"]
+        summary["policy_rule_drifts"] = policy_summary["semantic_rule_drifts"]
+        summary["policy_rule_inconclusive"] = (
+            policy_summary["semantic_rule_inconclusive"]
+        )
+        summary["policy_drift_findings"] = (
+            policy_summary["policy_drift_findings"]
+        )
+        summary["policy_comparison_findings"] = policy_summary["findings_total"]
+        findings.extend(
+            {
+                "category": "policy_comparison",
+                "policy_category": finding["category"],
+                **{
+                    key: value
+                    for key, value in finding.items()
+                    if key != "category"
+                },
+            }
+            for finding in policy_comparison["findings"]
+        )
+        if policy_summary["policy_drift_findings"]:
+            report["status"] = "DRIFT"
+            report["status_reason"] = (
+                "Foram encontradas divergências conclusivas face à política "
+                "de referência nos campos suportados."
+            )
+        else:
+            report["status_reason"] = (
+                "Não foram encontradas divergências conclusivas nos campos "
+                "suportados, mas a análise não prova o comportamento real "
+                "do tráfego nem a conformidade integral da firewall."
+            )
+        report["summary"]["status"] = report["status"]
+        report["policy_comparison"] = policy_comparison
+
+    return report
