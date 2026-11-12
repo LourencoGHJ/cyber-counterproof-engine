@@ -86,12 +86,23 @@ The dashboard presents the latest status, separate iptables/nftables counts, fin
 
 The default polling target is 1000 ms. This is a one-second collection interval, not a guarantee of millisecond end-to-end latency: actual freshness includes command execution, parsing, analysis and browser delivery. The collector is read-only and runs GET-only HTTP endpoints; it does not apply or modify firewall rules. The API does not publish raw rule text or IP/port selectors.
 
-The service must run on the Linux machine whose firewall is being inspected, with permission to execute the selected listing commands. Running the dashboard on Windows does not inspect a separate Linux firewall. A Windows browser can view a Linux-hosted instance through a protected private network or HTTPS reverse proxy.
+The service must run on the Linux machine whose firewall is being inspected. Running the dashboard on Windows does not inspect a separate Linux firewall. A Windows browser can view a Linux-hosted instance through a protected private network or HTTPS reverse proxy.
+
+The web service should run as an unprivileged user. If firewall listing requires elevated permissions, configure a narrowly scoped sudoers rule and start CCE with `--sudo-readonly`. This uses non-interactive `sudo -n` only for the fixed listing commands; the web process itself does not run as root. Adapt the binary paths to the host (check them with `command -v iptables-save ip6tables-save nft`) and validate the file with `visudo`:
+
+    sudo visudo -f /etc/sudoers.d/cce-firewall-read
+    cce-dashboard ALL=(root) NOPASSWD: /usr/sbin/iptables-save "", /usr/sbin/ip6tables-save "", /usr/sbin/nft -j list ruleset
+
+The empty argument string on the two iptables commands restricts them to no arguments; the nft command is restricted to the exact JSON list-ruleset invocation. Add only the commands actually installed on the host. Then run:
+
+    cce serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 1000 --sudo-readonly
+
+If the exact sudoers permission is absent or `sudo` cannot run non-interactively, the collector reports an error and does not prompt for a password.
 
 **Remote access:** keep the service bound to `127.0.0.1` and expose it through a TLS reverse proxy or private VPN where possible. Direct non-loopback binding requires an explicit acknowledgement, a token of at least 32 characters, and a trusted VPN/HTTPS transport. Set the token in the environment; do not pass it as a command-line argument:
 
     export CCE_DASHBOARD_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-    cce serve-dashboard --policy config/policy.json --host 0.0.0.0 --port 8765 --source auto --interval-ms 1000 --allow-remote --trusted-transport
+    cce serve-dashboard --policy config/policy.json --host 0.0.0.0 --port 8765 --source auto --interval-ms 1000 --allow-remote --trusted-transport --sudo-readonly
 
 Remote access uses HTTP Basic authentication (username `cce`, password from `CCE_DASHBOARD_TOKEN`). The built-in server does not provide TLS; never expose its plain HTTP port directly to the public Internet. Restrict access at the VPN or reverse proxy and keep the token secret.
 
