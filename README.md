@@ -17,7 +17,7 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Monitoring:** records periodic checks and drift findings in JSON history.
 - **Reproducible evidence:** generates JSON reports and SHA-256 hashes for input files.
 - **nftables integration:** validates rules files with nft --check and can inspect the active ruleset in read-only mode.
-- **Local dashboard:** presents an HTML summary of monitoring history.
+- **Live firewall dashboard:** serves current read-only iptables/ip6tables/nftables analysis over HTTP and pushes updates to browsers with Server-Sent Events; static history reports remain available separately.
 - **Packet evaluation:** simulates a packet against a supported iptables filter-chain subset, including TCP flag masks, and explains the rule-by-rule result.
 - **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes, including SYN-only matching, from synthetic fixtures.
 - **Rule conflict analysis:** detects exact duplicates, redundant rules, proven shadowing, potential verdict overlaps, and TCP rules whose flag conditions can never match.
@@ -75,6 +75,23 @@ Generate the local security operations dashboard from monitoring history:
     cce dashboard --history reports/monitor-history.json --output reports/dashboard.html
 
 The dashboard is a simple, responsive HTML report with the latest assessment, counts for PASS/DRIFT/INCONCLUSIVE/ERROR, findings from the latest run, and a searchable, filterable, sortable table of recent executions. Execution details can be expanded, and the report can be printed. It uses only data present in the JSON history, has no external assets, and does not present itself as a live firewall or host-monitoring console.
+
+Start the live firewall dashboard on a Linux host:
+
+    cce serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --interval-ms 1000
+
+Open **http://127.0.0.1:8765/** in a browser. The service recollects `iptables-save`, `ip6tables-save`, and `nft -j list ruleset` every second and pushes each completed analysis to connected browsers using Server-Sent Events. The page presents the current status, IPv4/IPv6 rule counts, nftables inventory, source availability, and findings. It contains no logo or decorative branding. Without `--policy`, the inventory is still shown but the global result remains `INCONCLUSIVE`.
+
+The 1000 ms interval is a polling target, not a millisecond latency guarantee. Actual update time also includes command execution and analysis. The server is read-only and exposes GET endpoints only; it does not modify firewall rules. The API does not publish raw rule text or IP/port selectors.
+
+The collector must run on the Linux machine whose firewall is being inspected, with permission to execute the three read-only listing commands. Running the dashboard on Windows does not inspect a separate Linux firewall.
+
+**Remote access:** keep the CCE service bound to `127.0.0.1` and expose it through a TLS reverse proxy or a private VPN. If binding to a non-loopback address, the service requires an environment variable (default: `CCE_DASHBOARD_PASSWORD`) containing at least 24 characters and uses HTTP Basic authentication. The built-in server does not provide TLS; never expose its plain HTTP port directly to the public Internet. For example, on a private VPN only:
+
+    export CCE_DASHBOARD_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    cce serve-dashboard --host 0.0.0.0 --port 8765 --policy config/policy.json
+
+The static `cce dashboard` command remains intended for an exported historical HTML report; use `cce serve-dashboard` for live collection.
 
 Evaluate a synthetic packet against an offline iptables-save snapshot (read-only):
 
