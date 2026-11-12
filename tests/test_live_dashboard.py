@@ -1,5 +1,9 @@
 import json
+import base64
 import subprocess
+import threading
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +12,8 @@ import pytest
 from cce.live_dashboard import (
     DASHBOARD_HTML,
     DashboardState,
+    _DashboardHTTPServer,
+    _make_handler,
     collect_live_state,
     validate_server_security,
 )
@@ -181,3 +187,49 @@ def test_live_dashboard_has_no_logo_and_uses_server_sent_events():
     assert "Não existe garantia de latência ao nível do milissegundo" in DASHBOARD_HTML
 
 
+
+
+def test_http_dashboard_requires_basic_auth_and_streams_live_events():
+    state = DashboardState()
+    state.publish({"status": "DRIFT", "summary": {"findings": 1}})
+    stop_event = threading.Event()
+    username = "cce"
+    password = "p" * 24
+    handler = _make_handler(state, stop_event, username, password)
+    server = _DashboardHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with pytest.raises(HTTPError) as unauthorised:
+            urlopen(f"{base_url}/api/v1/status", timeout=2)
+        assert unauthorised.value.code == 401
+
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        headers = {"Authorization": "Basic " + token}
+
+        status_request = Request(
+            f"{base_url}/api/v1/status",
+            headers=headers,
+        )
+        with urlopen(status_request, timeout=2) as response:
+            status = json.loads(response.read().decode("utf-8"))
+        assert status["data"]["status"] == "DRIFT"
+
+        event_request = Request(
+            f"{base_url}/api/v1/events",
+            headers=headers,
+        )
+        with urlopen(event_request, timeout=2) as response:
+            assert response.headers.get_content_type() == "text/event-stream"
+            event_lines = [response.readline() for _ in range(4)]
+        assert event_lines[0].startswith(b"id: 1")
+        assert event_lines[1].startswith(b"event: snapshot")
+        assert b'"status":"DRIFT"' in event_lines[2]
+        assert event_lines[3] == b"\n"
+    finally:
+        stop_event.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
