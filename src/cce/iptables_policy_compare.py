@@ -11,6 +11,7 @@ import ipaddress
 from typing import Any, Iterable
 
 from cce.iptables_ir import RuleIR, parse_iptables_rules_ir
+from cce.iptables_save import parse_iptables_save
 
 
 TERMINAL_VERDICTS = {"ACCEPT", "DROP", "REJECT"}
@@ -228,6 +229,7 @@ def _compare_one_rule(
     policy_rule: dict[str, Any],
     family: str,
     rules: list[RuleIR] | None,
+    declared_filter_chains: set[str],
     parse_error: bool,
 ) -> dict[str, Any]:
     rule_id = policy_rule["id"]
@@ -269,6 +271,7 @@ def _compare_one_rule(
         rule for rule in chain_rules
         if rule.interpretation == "complete"
         and rule.target_operation in {"jump", "goto"}
+        and rule.target in declared_filter_chains
         and (rule.target or "").upper() not in TERMINAL_VERDICTS
     ]
     candidates: list[tuple[RuleIR, str]] = []
@@ -413,6 +416,7 @@ def compare_policy_rules_to_snapshots(
         raise ValueError("A política tem de conter uma lista 'rules'.")
 
     parsed_by_family: dict[str, list[RuleIR] | None] = {}
+    filter_chains_by_family: dict[str, set[str]] = {}
     errors_by_family: dict[str, bool] = {}
     for family, snapshot_text in snapshots:
         if family not in {"ipv4", "ipv6"}:
@@ -422,9 +426,16 @@ def compare_policy_rules_to_snapshots(
                 snapshot_text,
                 family,
             )
+            structural = parse_iptables_save(snapshot_text, family)
+            filter_chains_by_family[family] = {
+                chain["name"]
+                for chain in structural["chains"]
+                if chain["table"] == "filter"
+            }
             errors_by_family[family] = False
         except ValueError:
             parsed_by_family[family] = None
+            filter_chains_by_family[family] = set()
             errors_by_family[family] = True
 
     comparisons: list[dict[str, Any]] = []
@@ -435,6 +446,7 @@ def compare_policy_rules_to_snapshots(
                     policy_rule,
                     family,
                     parsed_by_family[family],
+                    filter_chains_by_family[family],
                     errors_by_family[family],
                 )
             )
