@@ -184,7 +184,7 @@ def test_live_dashboard_has_no_logo_and_uses_server_sent_events():
     assert "https://" not in DASHBOARD_HTML
     assert "navigator.sendBeacon" not in DASHBOARD_HTML
     assert "POST " not in DASHBOARD_HTML
-    assert "Não existe garantia de latência ao nível do milissegundo" in DASHBOARD_HTML
+    assert "não existe garantia de latência ao nível do milissegundo" in DASHBOARD_HTML
 
 
 
