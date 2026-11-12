@@ -67,7 +67,7 @@ def test_reports_reachable_multi_chain_cycle_as_potential_recursion():
     assert finding["certainty"] == "potential"
     assert finding["chains"] == ["app", "leaf"]
     assert finding["structurally_reachable_from_base"] is True
-    assert finding["line_numbers"] == [9, 10]
+    assert finding["line_numbers"] == [8, 9]
 
 
 def test_reports_self_reference_as_potential_cycle():
