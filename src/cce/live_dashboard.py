@@ -648,7 +648,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
 
   function render(snapshot) {
     const sequence = Number(snapshot.sequence ?? -1);
-    const isNewUpdate = sequence < 0 || sequence > lastSequence;
+    const isNewUpdate = sequence < 0 || (sequence > 0 && sequence > lastSequence);
     if (sequence >= 0 && sequence > lastSequence) lastSequence = sequence;
     const status = String(snapshot.status || "INCONCLUSIVE").toUpperCase();
     const badge = byId("status");
