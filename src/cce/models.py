@@ -9,6 +9,9 @@ from typing import Any
 VALID_ACTIONS = {"accept", "drop", "reject"}
 VALID_CHAINS = {"input", "output", "forward"}
 VALID_PROTOCOLS = {"any", "tcp", "udp", "icmp"}
+VALID_CONNECTION_STATES = {
+    "INVALID", "NEW", "ESTABLISHED", "RELATED", "UNTRACKED", "SNAT", "DNAT"
+}
 VALID_SEVERITIES = {"low", "medium", "high", "critical"}
 VALID_TRAFFIC_RESULTS = VALID_ACTIONS | {"error"}
 
@@ -96,6 +99,27 @@ def validate_policy(policy: dict[str, Any]) -> list[str]:
             errors.append(
                 f"{prefix}.protocol tem de ser um de {sorted(VALID_PROTOCOLS)}."
             )
+
+        if "connection_states" in rule:
+            states = rule["connection_states"]
+            if not isinstance(states, list) or not states:
+                errors.append(
+                    f"{prefix}.connection_states tem de ser uma lista não vazia."
+                )
+            else:
+                seen_states: set[str] = set()
+                for state_index, state in enumerate(states):
+                    if not isinstance(state, str) or state not in VALID_CONNECTION_STATES:
+                        errors.append(
+                            f"{prefix}.connection_states[{state_index}] tem de ser um de "
+                            f"{sorted(VALID_CONNECTION_STATES)}."
+                        )
+                    elif state in seen_states:
+                        errors.append(
+                            f"{prefix}.connection_states não pode conter valores duplicados."
+                        )
+                    else:
+                        seen_states.add(state)
 
         port = rule.get("destination_port")
         if port is not None and not _valid_port(port):

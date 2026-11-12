@@ -22,6 +22,10 @@
       "protocol": "any",
       "source": "any",
       "destination_port": null,
+      "connection_states": [
+        "ESTABLISHED",
+        "RELATED"
+      ],
       "service": "established_related",
       "description": "Permitir tráfego de ligações já estabelecidas ou relacionadas."
     },

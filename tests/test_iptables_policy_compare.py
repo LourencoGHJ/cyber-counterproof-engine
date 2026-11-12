@@ -2,6 +2,7 @@ import json
 
 from cce.iptables_policy_compare import compare_policy_rules_to_snapshots
 from cce.iptables_save import analyze_iptables_saves
+from cce.models import validate_policy
 
 
 def baseline_rule(**overrides):
@@ -20,6 +21,18 @@ def baseline_rule(**overrides):
 
 def policy(*rules):
     return {"policy_id": "test", "rules": list(rules)}
+
+
+def established_rule(**overrides):
+    rule = baseline_rule(
+        protocol="any",
+        source="any",
+        destination_port=None,
+        service="established_related",
+    )
+    rule["connection_states"] = ["ESTABLISHED", "RELATED"]
+    rule.update(overrides)
+    return rule
 
 
 def snapshot(rule_lines, chain="INPUT"):
@@ -104,7 +117,7 @@ def test_partial_rule_in_chain_prevents_proving_absence():
     assert "parcialmente interpretadas" in report["comparisons"][0]["reason"]
 
 
-def test_extra_connection_state_selector_is_not_silently_ignored():
+def test_connection_state_selector_is_compared_when_policy_is_unrestricted():
     text = snapshot(
         "-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 "
         "-m conntrack --ctstate NEW -j ACCEPT\n"
@@ -112,8 +125,108 @@ def test_extra_connection_state_selector_is_not_silently_ignored():
     report = compare(baseline_rule(), text)
 
     item = report["comparisons"][0]
+    assert item["status"] == "NARROWER_SCOPE"
+    assert item["unmodelled_selectors"] == []
+
+
+def test_exact_connection_state_set_is_matched():
+    text = snapshot(
+        "-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n"
+    )
+    report = compare(established_rule(), text)
+
+    assert report["comparisons"][0]["status"] == "MATCHED"
+
+
+def test_narrower_connection_state_set_is_a_coverage_gap():
+    text = snapshot(
+        "-A INPUT -m conntrack --ctstate ESTABLISHED -j ACCEPT\n"
+    )
+    item = compare(established_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "NARROWER_SCOPE"
+    assert item["impact"] == "coverage_gap"
+
+
+def test_broader_connection_state_set_is_a_potential_exposure():
+    text = snapshot(
+        "-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED,NEW -j ACCEPT\n"
+    )
+    item = compare(established_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "BROADER_SCOPE"
+    assert item["impact"] == "potential_exposure"
+
+
+def test_missing_observed_state_filter_is_broader_than_policy():
+    item = compare(established_rule(), snapshot("-A INPUT -j ACCEPT\n"))[
+        "comparisons"
+    ][0]
+
+    assert item["status"] == "BROADER_SCOPE"
+
+
+def test_disjoint_connection_state_set_is_reported_as_missing():
+    text = snapshot("-A INPUT -m conntrack --ctstate NEW -j ACCEPT\n")
+    item = compare(established_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "MISSING"
+
+
+def test_partially_overlapping_connection_state_sets_are_reported():
+    text = snapshot(
+        "-A INPUT -m conntrack --ctstate ESTABLISHED,NEW -j ACCEPT\n"
+    )
+    item = compare(established_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "PARTIAL_OVERLAP"
+
+
+def test_legacy_state_match_module_is_compared():
+    text = snapshot(
+        "-A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT\n"
+    )
+
+    assert compare(established_rule(), text)["comparisons"][0]["status"] == (
+        "MATCHED"
+    )
+
+
+def test_negated_connection_state_selector_remains_inconclusive():
+    text = snapshot(
+        "-A INPUT -m conntrack ! --ctstate NEW -j ACCEPT\n"
+    )
+    item = compare(established_rule(), text)["comparisons"][0]
+
     assert item["status"] == "INCONCLUSIVE"
-    assert item["unmodelled_selectors"] == ["connection_states"]
+    assert "negated_conditions" in item["unmodelled_selectors"]
+
+
+def test_policy_connection_states_validation():
+    valid = {
+        "policy_id": "state-test",
+        "input_policy": "drop",
+        "output_policy": "accept",
+        "rules": [established_rule()],
+    }
+    assert validate_policy(valid) == []
+
+    invalid_values = [
+        [],
+        "ESTABLISHED",
+        ["UNKNOWN"],
+        ["NEW", "NEW"],
+        [None],
+    ]
+    for states in invalid_values:
+        invalid = {
+            **valid,
+            "rules": [{**established_rule(), "connection_states": states}],
+        }
+        assert any(
+            "connection_states" in error
+            for error in validate_policy(invalid)
+        )
 
 
 def test_multiple_candidate_rules_are_ambiguous():
