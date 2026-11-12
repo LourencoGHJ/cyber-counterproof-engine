@@ -419,9 +419,14 @@ def test_sse_endpoint_streams_json_updates():
     state.start()
     worker.start()
     try:
+        deadline = time.monotonic() + 3
+        while state.snapshot()["sequence"] < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert state.snapshot()["sequence"] >= 1
         address, port = server.server_address[:2]
         with urlopen(f"http://{address}:{port}/events", timeout=3) as response:
             assert response.headers["Content-Type"].startswith("text/event-stream")
+            assert response.headers["Transfer-Encoding"] == "chunked"
             data_line = ""
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
