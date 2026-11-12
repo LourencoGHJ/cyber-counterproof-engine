@@ -502,6 +502,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
   const byId = (id) => document.getElementById(id);
   const connection = byId("connection");
   const history = [];
+  let lastSequence = -1;
   const descriptions = {
     PASS: "Sem divergências reportadas nos campos analisados.",
     DRIFT: "Foram encontradas divergências face à política.",
@@ -572,6 +573,9 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
   }
 
   function render(snapshot) {
+    const sequence = Number(snapshot.sequence ?? -1);
+    const isNewUpdate = sequence < 0 || sequence > lastSequence;
+    if (sequence >= 0 && sequence > lastSequence) lastSequence = sequence;
     const status = String(snapshot.status || "INCONCLUSIVE").toUpperCase();
     const badge = byId("status");
     badge.textContent = status;
@@ -587,7 +591,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     setText("duration", snapshot.collection_duration_ms);
     setText("coverage", snapshot.scope ? "Âmbito: " + snapshot.scope + " · Intervalo configurado: " + snapshot.interval_seconds + " s" : "");
     updateFindings(snapshot.findings || []);
-    updateHistory(snapshot);
+    if (isNewUpdate) updateHistory(snapshot);
     const warnings = [...(snapshot.warnings || []), ...(snapshot.partial ? ["Recolha parcial; consulta as limitações antes de interpretar o resultado."] : [])];
     const warningBox = byId("warnings");
     warningBox.replaceChildren();
