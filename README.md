@@ -74,7 +74,7 @@ Generate the local security operations dashboard from monitoring history:
 
     cce dashboard --history reports/monitor-history.json --output reports/dashboard.html
 
-The dashboard is a simple, responsive HTML report with the latest assessment, counts for PASS/DRIFT/INCONCLUSIVE/ERROR, findings from the latest run, and a table of recent executions. It uses only data present in the JSON history, has no external assets or scripts, and does not present itself as a live firewall or host-monitoring console.
+The dashboard is a simple, responsive HTML report with the latest assessment, counts for PASS/DRIFT/INCONCLUSIVE/ERROR, findings from the latest run, and a searchable, filterable, sortable table of recent executions. Execution details can be expanded, and the report can be printed. It uses only data present in the JSON history, has no external assets, and does not present itself as a live firewall or host-monitoring console.
 
 Evaluate a synthetic packet against an offline iptables-save snapshot (read-only):
 
