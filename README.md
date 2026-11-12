@@ -70,9 +70,11 @@ Inspect the active ruleset in read-only mode:
 
     cce inspect-live --output reports/live-summary.json
 
-Generate a local dashboard from monitoring history:
+Generate the local security operations dashboard from monitoring history:
 
     cce dashboard --history reports/monitor-history.json --output reports/dashboard.html
+
+The dashboard is a self-contained, responsive HTML report with the latest assessment, run and finding metrics, status distribution, finding trend, recent findings, severity summary, and searchable execution history. It uses only data present in the JSON history, does not invent host or traffic telemetry, and has no external fonts, scripts, or network dependencies.
 
 Evaluate a synthetic packet against an offline iptables-save snapshot (read-only):
 
