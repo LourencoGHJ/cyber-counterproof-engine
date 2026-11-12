@@ -469,7 +469,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
   <div class="metrics">
     <div class="metric"><span class="label">Fonte</span><strong id="source" class="value">—</strong></div>
     <div class="metric"><span class="label">Regras iptables</span><strong id="rules" class="value">—</strong></div>
-    <div class="metric"><span class="label">Chains iptables</span><strong id="iptables-chains" class="value">—</strong></div>
+    <div class="metric"><span class="label">Regras nftables</span><strong id="nft-rules" class="value">—</strong></div>
     <div class="metric"><span class="label">Base chains nftables</span><strong id="nft-chains" class="value">—</strong></div>
     <div class="metric"><span class="label">Descobertas</span><strong id="findings-count" class="value">—</strong></div>
     <div class="metric"><span class="label">Recolha (ms)</span><strong id="duration" class="value">—</strong></div>
@@ -581,7 +581,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     setText("source", snapshot.source);
     const summary = snapshot.summary || {};
     setText("rules", summary.iptables_rules_total ?? 0);
-    setText("iptables-chains", summary.iptables_chains_total ?? 0);
+    setText("nft-rules", summary.nftables_rules_total ?? 0);
     setText("nft-chains", summary.nftables_base_chains ?? 0);
     setText("findings-count", Array.isArray(snapshot.findings) ? snapshot.findings.length : 0);
     setText("duration", snapshot.collection_duration_ms);
