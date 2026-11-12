@@ -21,6 +21,7 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Packet evaluation:** simulates a packet against a supported iptables filter-chain subset, including TCP flag masks, and explains the rule-by-rule result.
 - **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes, including SYN-only matching, from synthetic fixtures.
 - **Rule conflict analysis:** detects exact duplicates, redundant rules, proven shadowing, potential verdict overlaps, and TCP rules whose flag conditions can never match.
+- **Chain-flow analysis:** maps explicit iptables jump/goto references, structural reachability from base chains, unresolved targets, and potential recursive chain components.
 - **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
 
 ## DevSecOps in the development lifecycle
@@ -90,11 +91,17 @@ Analyze a synthetic iptables-save snapshot for duplicate, redundant, shadowed, a
 
 The analysis compares only fully interpreted terminal rules within the same chain of the `filter` table. It reports full shadowing as proven only when an earlier rule covers every packet that could match a later rule. Opposing verdicts that may match some of the same traffic, without proven full coverage, are reported as potential overlaps. It also detects supported TCP flag conditions that are impossible to satisfy and reports them as unmatchable rules, separately from shadowed rules. Partially interpreted and non-terminal rules are counted but excluded. Exit code 0 means no findings, 1 means findings were detected, and 2 means invalid or malformed input. The report omits raw network/interface selectors and original rule text; it retains the snapshot path and SHA-256 evidence hash.
 
+Analyze structural control flow between iptables filter chains:
+
+    cce analyze-chain-flow --snapshot /path/to/iptables.save --family ipv4 --output reports/chain-flow.json
+
+The chain-flow report preserves explicit jump/goto references in snapshot line order, identifies user chains with no structural path from a base chain, and detects strongly connected components that form potential recursive paths. Reachability is structural: rule selectors are not evaluated, so a reference is not proof that a packet can traverse it. Cycles are reported as potential, not as proven runtime recursion. Unresolved targets remain ambiguous because they may be unsupported extension targets rather than missing chains. Exit code 0 means no findings, 1 means structural findings were reported, 3 means the analysis is partial because the snapshot contains malformed lines, and 2 indicates invalid input.
+
 Run a consolidated offline analysis of one or both firewall families:
 
     cce analyze-snapshot --ipv4 /path/to/iptables.save --ipv6 /path/to/ip6tables.save --output reports/snapshot-analysis.json
 
-The consolidated report combines structural inventory, IR interpretation metrics, heuristic SSH/TCP/22 candidates, and supported terminal-rule conflict analysis. Either `--ipv4` or `--ipv6` may be omitted, but an omitted family is explicitly reported as not analysed. The overall status is always `INCONCLUSIVE`: this command does not compare a policy baseline or determine real traffic behaviour. Exit code 1 indicates static rule-conflict findings, 3 indicates that the report was generated but the overall assessment remains inconclusive, and 2 indicates invalid input. Malformed snapshots retain their structural summary, while semantic analyses are skipped rather than producing potentially misleading results. The report does not include original rule text or network/port selector values.
+The consolidated report combines structural inventory, IR interpretation metrics, heuristic SSH/TCP/22 candidates, and supported terminal-rule conflict analysis. It also includes a structural chain-flow graph with explicit references, reachability and potential recursion findings. Either `--ipv4` or `--ipv6` may be omitted, but an omitted family is explicitly reported as not analysed. The overall status is always `INCONCLUSIVE`: this command does not compare a policy baseline or determine real traffic behaviour. Exit code 1 indicates static rule-conflict findings, 3 indicates that the report was generated but the overall assessment remains inconclusive, and 2 indicates invalid input. Malformed snapshots retain their structural summary, while semantic analyses are skipped rather than producing potentially misleading results. The report does not include original rule text or network/port selector values.
 
 ## Build and smoke-test the Docker image
 
