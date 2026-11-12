@@ -727,15 +727,21 @@ def _make_handler(
             if path == "/api/v1/events":
                 self._send_headers(200, "text/event-stream; charset=utf-8")
                 self.send_header("Connection", "keep-alive")
+                self.send_header("Transfer-Encoding", "chunked")
                 self.send_header("X-Accel-Buffering", "no")
                 self.end_headers()
+
+                def write_chunk(payload_bytes: bytes) -> None:
+                    header = f"{len(payload_bytes):X}\r\n".encode("ascii")
+                    self.wfile.write(header + payload_bytes + b"\r\n")
+                    self.wfile.flush()
+
                 cursor = -1
                 try:
                     while not stop_event.is_set():
                         version, payload = state.wait_for_change(cursor, timeout=15.0)
                         if payload is None or version <= cursor:
-                            self.wfile.write(b": keep-alive\n\n")
-                            self.wfile.flush()
+                            write_chunk(b": keep-alive\n\n")
                             continue
                         event = (
                             f"id: {version}\n"
@@ -744,8 +750,7 @@ def _make_handler(
                             + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
                             + "\n\n"
                         )
-                        self.wfile.write(event.encode("utf-8"))
-                        self.wfile.flush()
+                        write_chunk(event.encode("utf-8"))
                         cursor = version
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     return
