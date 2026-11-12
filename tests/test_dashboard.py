@@ -9,10 +9,9 @@ def write_history(path, entries):
     path.write_text(json.dumps(entries), encoding="utf-8")
 
 
-def test_dashboard_renders_overview_distribution_findings_and_activity(tmp_path):
+def test_dashboard_shows_latest_assessment_findings_and_history(tmp_path):
     history = tmp_path / "history.json"
     output = tmp_path / "dashboard.html"
-
     write_history(
         history,
         [
@@ -25,20 +24,16 @@ def test_dashboard_renders_overview_distribution_findings_and_activity(tmp_path)
             {
                 "timestamp_utc": "2026-11-12T08:05:00+00:00",
                 "status": "DRIFT",
-                "summary": {"findings_total": 2},
+                "summary": {"findings_total": 1},
                 "findings": [
                     {
                         "code": "CCE-DRIFT-RULE-MISMATCH",
                         "rule_id": "allow-ssh-lab",
                         "severity": "high",
                         "reason": "A regra observada diverge da política.",
-                    },
-                    {
-                        "code": "CCE-BASE-POLICY-MISMATCH",
-                        "rule_id": "INPUT",
-                        "severity": "medium",
-                        "reason": "A política base não coincide.",
-                    },
+                        "family": "ipv4",
+                        "observed_lines": [5],
+                    }
                 ],
             },
             {
@@ -47,14 +42,6 @@ def test_dashboard_renders_overview_distribution_findings_and_activity(tmp_path)
                 "error": "Test error",
                 "findings": [],
             },
-            {
-                "timestamp_utc": "2026-11-12T08:15:00+00:00",
-                "status": "INCONCLUSIVE",
-                "summary": {"findings_total": 1},
-                "findings": [
-                    {"code": "CCE-UNKNOWN", "rule_id": "INPUT", "severity": "low"}
-                ],
-            },
         ],
     )
 
@@ -62,20 +49,17 @@ def test_dashboard_renders_overview_distribution_findings_and_activity(tmp_path)
     content = result.read_text(encoding="utf-8")
 
     assert result == output
-    assert "Firewall security posture" in content
-    assert "Distribuição de estados" in content
-    assert "Tendência de descobertas" in content
-    assert "Histórico de verificações" in content
-    assert "INCONCLUSIVE" in content
+    assert "Histórico de auditorias" in content
+    assert "Última verificação" in content
+    assert "Execuções recentes" in content
     assert "DRIFT" in content
-    assert "CCE-UNKNOWN" in content
-    assert "allow-ssh-lab" not in content  # Findings are scoped to the latest run.
-    assert "Test error" in content  # Historical errors remain visible in activity.
-    assert "Verificações registadas" in content
-    assert "FIREWALL SECURITY OPERATIONS" in content
+    assert "PASS" in content
+    assert "allow-ssh-lab" not in content
+    assert "Test error" in content
+    assert "227" not in content
 
 
-def test_dashboard_renders_empty_history_with_actionable_empty_states(tmp_path):
+def test_dashboard_shows_empty_history_without_fabricated_metrics(tmp_path):
     history = tmp_path / "history.json"
     write_history(history, [])
 
@@ -83,17 +67,14 @@ def test_dashboard_renders_empty_history_with_actionable_empty_states(tmp_path):
         encoding="utf-8"
     )
 
-    assert "Sem verificações registadas" in content
-    assert "Ainda não existem estados registados." in content
-    assert "Executa" in content
-    assert "Sem atividade para apresentar" in content
+    assert "Ainda não existem verificações" in content
+    assert ">0</strong>" in content
+    assert "Sem dados" not in content
 
 
-def test_dashboard_escapes_untrusted_history_values_and_whitelists_status_classes(
-    tmp_path,
-):
+def test_dashboard_escapes_untrusted_values_and_limits_status_css_classes(tmp_path):
     history = tmp_path / "history.json"
-    malicious = '</script><script>alert("xss")</script>'
+    malicious = '</td><script>alert("xss")</script>'
     write_history(
         history,
         [
@@ -118,12 +99,12 @@ def test_dashboard_escapes_untrusted_history_values_and_whitelists_status_classe
     )
 
     assert malicious not in content
-    assert "&lt;/script&gt;&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;" in content
-    assert "badge-unknown" in content
-    assert 'class="badge badge-&lt;' not in content
+    assert "&lt;/td&gt;&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;" in content
+    assert "status-unknown" in content
+    assert 'class="status status-&lt;' not in content
 
 
-def test_dashboard_has_no_external_assets_or_network_dependencies(tmp_path):
+def test_dashboard_is_self_contained_and_has_no_decorative_scripts_or_charts(tmp_path):
     history = tmp_path / "history.json"
     write_history(history, [{"status": "PASS", "findings": []}])
 
@@ -133,8 +114,9 @@ def test_dashboard_has_no_external_assets_or_network_dependencies(tmp_path):
 
     assert "http://" not in content
     assert "https://" not in content
-    assert "<svg" in content
-    assert "addEventListener" in content
+    assert "<script" not in content
+    assert "<svg" not in content
+    assert "gradient" not in content.lower()
 
 
 def test_dashboard_rejects_invalid_json(tmp_path):
