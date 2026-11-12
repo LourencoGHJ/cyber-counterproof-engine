@@ -138,7 +138,7 @@ def make_parser():
         "--source",
         choices=("auto", "iptables", "nftables"),
         default="auto",
-        help="Fonte de recolha; auto prefere iptables-save e usa nftables como fallback.",
+        help="Fonte de recolha; auto consulta iptables-save, ip6tables-save e nftables.",
     )
     live_dashboard.add_argument(
         "--interval-ms",
