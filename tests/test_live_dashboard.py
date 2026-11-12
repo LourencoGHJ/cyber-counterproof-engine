@@ -582,3 +582,103 @@ def test_sse_stream_publishes_only_changed_data_and_sends_heartbeats():
         server.shutdown()
         server.server_close()
         worker.join(timeout=2)
+
+
+
+def test_live_collector_data_reaches_http_and_sse_and_changes_when_snapshot_changes(
+    tmp_path, monkeypatch
+):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
+    tools = {
+        "iptables-save": "/usr/bin/iptables-save",
+        "ip6tables-save": None,
+        "nft": None,
+    }
+    monkeypatch.setattr(
+        "cce.live_dashboard.shutil.which",
+        lambda name: tools.get(name),
+    )
+
+    current_snapshot = {
+        "text": iptables_snapshot(),
+    }
+
+    def fake_run(command, **kwargs):
+        assert command == ["/usr/bin/iptables-save"]
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["check"] is False
+        return subprocess.CompletedProcess(
+            command, 0, stdout=current_snapshot["text"], stderr=""
+        )
+
+    monkeypatch.setattr("cce.live_dashboard.subprocess.run", fake_run)
+
+    collector = LiveSnapshotCollector(str(policy_path), source="iptables")
+    state = LiveState(collector, interval_seconds=0.25)
+    server = create_dashboard_server("127.0.0.1", 0, state)
+    worker = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.02},
+        daemon=True,
+    )
+    state.start()
+    worker.start()
+
+    try:
+        address, port = server.server_address[:2]
+        base = f"http://{address}:{port}"
+        first_status = {}
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            with urlopen(base + "/api/v1/status", timeout=2) as response:
+                first_status = json.loads(response.read().decode("utf-8"))
+            if first_status.get("sequence", 0) >= 1:
+                break
+            time.sleep(0.02)
+
+        assert first_status["sequence"] == 1
+        assert first_status["source"] == "iptables-save"
+        assert first_status["summary"]["iptables_rules_total"] == 1
+        first_hash = first_status["evidence"]["iptables"]["ipv4"]["sha256"]
+        assert first_hash
+        assert "iptables-save" in first_status["evidence"]["iptables"]["ipv4"]["source"]
+        assert "-A INPUT" not in json.dumps(first_status)
+        assert "--dport 443" not in json.dumps(first_status)
+
+        with urlopen(base + "/events", timeout=3) as response:
+            first_event = ""
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                line = response.readline().decode("utf-8").strip()
+                if line.startswith("data: "):
+                    first_event = line[6:]
+                    break
+            assert first_event
+            first_payload = json.loads(first_event)
+            assert first_payload["sequence"] == 1
+            assert first_payload["evidence"]["iptables"]["ipv4"]["sha256"] == first_hash
+
+            current_snapshot["text"] = iptables_snapshot().replace(
+                "--dport 443", "--dport 22"
+            )
+            changed_event = ""
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                line = response.readline().decode("utf-8").strip()
+                if line.startswith("data: "):
+                    changed_event = line[6:]
+                    break
+            assert changed_event
+            changed_payload = json.loads(changed_event)
+            assert changed_payload["sequence"] == 2
+            assert changed_payload["status"] == "DRIFT"
+            assert changed_payload["evidence"]["iptables"]["ipv4"]["sha256"] != first_hash
+            assert "-A INPUT" not in json.dumps(changed_payload)
+            assert "--dport 22" not in json.dumps(changed_payload)
+    finally:
+        state.stop()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
