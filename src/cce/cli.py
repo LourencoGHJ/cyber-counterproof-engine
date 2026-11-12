@@ -141,10 +141,10 @@ def make_parser():
         help="Fonte de recolha; auto prefere iptables-save e usa nftables como fallback.",
     )
     live_dashboard.add_argument(
-        "--interval",
-        type=float,
-        default=1.0,
-        help="Intervalo de recolha em segundos (mínimo: 1).",
+        "--interval-ms",
+        type=int,
+        default=1000,
+        help="Intervalo de recolha em milissegundos (mínimo: 1000).",
     )
     live_dashboard.add_argument("--host", default="127.0.0.1")
     live_dashboard.add_argument("--port", type=int, default=8765)
@@ -486,7 +486,7 @@ def main():
                 expected_path=args.expected,
                 observed_path=args.observed,
                 history_path=args.history,
-                interval_seconds=args.interval,
+                interval_seconds=args.interval_ms / 1000.0,
                 max_checks=args.checks,
                 on_result=show_result,
             )
