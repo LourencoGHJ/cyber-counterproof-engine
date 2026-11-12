@@ -201,6 +201,8 @@ def test_serve_dashboard_cli_exposes_live_read_only_options():
     args = make_parser().parse_args(
         [
             "serve-dashboard",
+            "--policy", "config/policy.json",
+            "--source", "auto",
             "--host", "127.0.0.1",
             "--port", "9000",
             "--interval-ms", "1500",
@@ -209,6 +211,8 @@ def test_serve_dashboard_cli_exposes_live_read_only_options():
     )
 
     assert args.command == "serve-dashboard"
+    assert args.policy == "config/policy.json"
+    assert args.source == "auto"
     assert args.host == "127.0.0.1"
     assert args.port == 9000
     assert args.interval_ms == 1500
@@ -235,14 +239,16 @@ def test_serve_dashboard_cli_loads_policy_and_starts_server(
             "--host", "127.0.0.1",
             "--port", "9010",
             "--interval-ms", "1000",
+            "--timeout", "4",
         ],
     )
 
     assert main() == 0
+    assert captured["policy_path"] == str(policy_file)
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 9010
-    assert captured["interval_ms"] == 1000
-    assert captured["policy"]["policy_id"] == "test-policy"
+    assert captured["interval_seconds"] == 1.0
+    assert captured["timeout_seconds"] == 4
 
 
 def test_serve_dashboard_cli_rejects_invalid_policy(tmp_path, monkeypatch, capsys):
