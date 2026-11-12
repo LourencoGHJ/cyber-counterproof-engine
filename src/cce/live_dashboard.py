@@ -468,8 +468,9 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
   <h2>Resumo da recolha</h2>
   <div class="metrics">
     <div class="metric"><span class="label">Fonte</span><strong id="source" class="value">—</strong></div>
-    <div class="metric"><span class="label">Regras</span><strong id="rules" class="value">—</strong></div>
-    <div class="metric"><span class="label">Chains</span><strong id="chains" class="value">—</strong></div>
+    <div class="metric"><span class="label">Regras iptables</span><strong id="rules" class="value">—</strong></div>
+    <div class="metric"><span class="label">Chains iptables</span><strong id="iptables-chains" class="value">—</strong></div>
+    <div class="metric"><span class="label">Base chains nftables</span><strong id="nft-chains" class="value">—</strong></div>
     <div class="metric"><span class="label">Descobertas</span><strong id="findings-count" class="value">—</strong></div>
     <div class="metric"><span class="label">Recolha (ms)</span><strong id="duration" class="value">—</strong></div>
   </div>
@@ -478,8 +479,8 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
 <section>
   <h2>Descobertas atuais</h2>
   <div class="panel table-wrap">
-    <table><thead><tr><th>Estado</th><th>Família</th><th>Chain</th><th>Regra</th><th>Descrição</th><th>Linhas</th></tr></thead>
-    <tbody id="findings"><tr><td colspan="6" class="muted">A aguardar dados.</td></tr></tbody></table>
+    <table><thead><tr><th>Fonte</th><th>Estado</th><th>Família</th><th>Chain</th><th>Regra</th><th>Descrição</th><th>Linhas</th></tr></thead>
+    <tbody id="findings"><tr><td colspan="7" class="muted">A aguardar dados.</td></tr></tbody></table>
   </div>
 </section>
 <section>
@@ -539,6 +540,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     }
     for (const item of items.slice(0, 100)) {
       const row = document.createElement("tr");
+      cell(row, item.source);
       cell(row, item.status || item.severity || item.code);
       cell(row, item.family);
       cell(row, item.chain);
@@ -578,8 +580,9 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     setText("updated", snapshot.updated_at_utc ? "Atualizado " + snapshot.updated_at_utc : "Ainda sem atualização");
     setText("source", snapshot.source);
     const summary = snapshot.summary || {};
-    setText("rules", summary.rules_total ?? summary.rules_semantically_compared);
-    setText("chains", summary.chains_total ?? summary.base_chains);
+    setText("rules", summary.iptables_rules_total ?? 0);
+    setText("iptables-chains", summary.iptables_chains_total ?? 0);
+    setText("nft-chains", summary.nftables_base_chains ?? 0);
     setText("findings-count", Array.isArray(snapshot.findings) ? snapshot.findings.length : 0);
     setText("duration", snapshot.collection_duration_ms);
     setText("coverage", snapshot.scope ? "Âmbito: " + snapshot.scope + " · Intervalo configurado: " + snapshot.interval_seconds + " s" : "");
