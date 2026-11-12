@@ -167,29 +167,17 @@ class LiveSnapshotCollector:
             )
 
         report = analyze_firewall_snapshots(snapshots, policy=self.policy)
-        status = report.get("status", "INCONCLUSIVE")
-        summary = report.get("summary", {})
-        if warnings and status != "DRIFT":
-            status = "INCONCLUSIVE"
-
-        limitations = list(report.get("limitations", []))
-        limitations.append(
-            "A fonte iptables-save pode não incluir regras nftables nativas "
-            "que não sejam expostas pela camada de compatibilidade iptables."
-        )
-        if warnings:
-            limitations.extend(warnings)
-
         return {
-            "updated_at_utc": _utc_now(),
-            "status": status,
-            "source": "iptables-save",
+            "status": report.get("status", "INCONCLUSIVE"),
             "scope": "semantic_iptables_snapshot_analysis",
             "partial": bool(warnings),
             "warnings": warnings,
-            "summary": summary,
+            "summary": report.get("summary", {}),
             "findings": _public_findings(report.get("findings", [])),
-            "limitations": limitations,
+            "limitations": list(report.get("limitations", [])) + [
+                "A fonte iptables-save pode não incluir regras nftables nativas "
+                "que não sejam expostas pela camada de compatibilidade iptables."
+            ],
             "evidence": {
                 family: {
                     "source": snapshots[family]["path"],
@@ -213,9 +201,7 @@ class LiveSnapshotCollector:
 
         analysis = analyze_live_ruleset(self.policy, snapshot)
         return {
-            "updated_at_utc": _utc_now(),
             "status": analysis.get("status", "INCONCLUSIVE"),
-            "source": "nftables",
             "scope": analysis.get("scope", "base_chain_policies_only"),
             "partial": True,
             "warnings": [],
@@ -226,37 +212,113 @@ class LiveSnapshotCollector:
         }
 
     def collect(self) -> dict[str, Any]:
-        """Executa uma recolha e devolve sempre um estado apresentável pelo UI."""
+        """Recolhe as fontes selecionadas e combina resultados sem somar fontes."""
         started = time.monotonic()
-        try:
-            source = self._resolve_source()
-            result = (
-                self._collect_iptables()
-                if source == "iptables"
-                else self._collect_nftables()
-            )
-        except Exception as exc:  # O serviço deve continuar a atualizar o estado de erro.
-            result = {
+        selected = (
+            ("iptables", "nftables")
+            if self.requested_source == "auto"
+            else (self.requested_source,)
+        )
+        results: dict[str, dict[str, Any]] = {}
+        warnings: list[str] = []
+
+        for source in selected:
+            try:
+                results[source] = (
+                    self._collect_iptables()
+                    if source == "iptables"
+                    else self._collect_nftables()
+                )
+            except Exception as exc:  # Mantém o serviço ativo após falhas de recolha.
+                warnings.append(f"{source}: {type(exc).__name__}: {exc}")
+
+        if not results:
+            return {
                 "updated_at_utc": _utc_now(),
                 "status": "ERROR",
-                "source": self.requested_source,
+                "source": " + ".join(selected),
                 "scope": "collection_failed",
                 "partial": True,
-                "warnings": [],
+                "warnings": warnings,
                 "summary": {},
                 "findings": [],
                 "limitations": [
-                    "A recolha falhou; não é possível inferir o estado atual da firewall."
+                    "Nenhuma fonte foi recolhida; não é possível determinar o estado atual da firewall."
                 ],
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": " | ".join(warnings),
                 "evidence": {},
+                "collection_duration_ms": round(
+                    (time.monotonic() - started) * 1000,
+                    2,
+                ),
             }
 
-        result["collection_duration_ms"] = round(
-            (time.monotonic() - started) * 1000,
-            2,
-        )
-        return result
+        for source, source_result in results.items():
+            warnings.extend(source_result.get("warnings", []))
+            if source_result.get("partial"):
+                warnings.append(f"A recolha da fonte {source} é parcial.")
+
+        findings: list[dict[str, Any]] = []
+        limitations: list[str] = []
+        evidence: dict[str, Any] = {}
+        for source, source_result in results.items():
+            for finding in source_result.get("findings", []):
+                findings.append({"source": source, **finding})
+            limitations.extend(source_result.get("limitations", []))
+            evidence[source] = source_result.get("evidence", {})
+
+        statuses = [item.get("status") for item in results.values()]
+        # Uma divergência observada numa fonte suportada continua a ser relevante.
+        # Sem divergências conclusivas, o estado global nunca é promovido a PASS.
+        status = "DRIFT" if "DRIFT" in statuses else "INCONCLUSIVE"
+        iptables_summary = results.get("iptables", {}).get("summary", {})
+        nft_summary = results.get("nftables", {}).get("summary", {})
+
+        return {
+            "updated_at_utc": _utc_now(),
+            "status": status,
+            "source": " + ".join(
+                "iptables-save" if source == "iptables" else "nftables"
+                for source in results
+            ),
+            "scope": "combined_read_only_firewall_analysis",
+            "partial": bool(warnings),
+            "warnings": warnings,
+            "summary": {
+                "iptables_rules_total": iptables_summary.get("rules_total", 0),
+                "iptables_chains_total": iptables_summary.get("chains_total", 0),
+                "iptables_rules_fully_interpreted": iptables_summary.get(
+                    "rules_ir_fully_interpreted", 0
+                ),
+                "nftables_rules_total": nft_summary.get("rules_total", 0),
+                "nftables_base_chains": nft_summary.get("base_chains", 0),
+                "nftables_base_policy_mismatches": nft_summary.get(
+                    "base_policy_mismatches", 0
+                ),
+                "findings_total": len(findings),
+            },
+            "findings": findings[:200],
+            "limitations": list(dict.fromkeys(limitations + [
+                "As contagens de iptables-save e nftables são apresentadas separadamente; "
+                "as fontes podem representar regras de compatibilidade sobrepostas.",
+                "A análise nftables continua limitada às políticas das base chains e à estrutura suportada.",
+                "As atualizações são periódicas; não constituem uma garantia de latência de milissegundos."
+            ])),
+            "evidence": evidence,
+            "source_results": {
+                source: {
+                    "status": item.get("status"),
+                    "scope": item.get("scope"),
+                    "partial": item.get("partial", False),
+                    "summary": item.get("summary", {}),
+                }
+                for source, item in results.items()
+            },
+            "collection_duration_ms": round(
+                (time.monotonic() - started) * 1000,
+                2,
+            ),
+        }
 
 
 class LiveState:
