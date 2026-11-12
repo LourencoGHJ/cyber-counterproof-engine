@@ -207,6 +207,7 @@ def test_serve_dashboard_cli_exposes_live_read_only_options():
             "--port", "9000",
             "--interval-ms", "1500",
             "--timeout", "4",
+            "--sudo-readonly",
         ]
     )
 
@@ -217,6 +218,7 @@ def test_serve_dashboard_cli_exposes_live_read_only_options():
     assert args.port == 9000
     assert args.interval_ms == 1500
     assert args.timeout == 4
+    assert args.sudo_readonly is True
 
 
 def test_serve_dashboard_cli_loads_policy_and_starts_server(
@@ -240,6 +242,7 @@ def test_serve_dashboard_cli_loads_policy_and_starts_server(
             "--port", "9010",
             "--interval-ms", "1000",
             "--timeout", "4",
+            "--sudo-readonly",
         ],
     )
 
@@ -249,6 +252,7 @@ def test_serve_dashboard_cli_loads_policy_and_starts_server(
     assert captured["port"] == 9010
     assert captured["interval_seconds"] == 1.0
     assert captured["timeout_seconds"] == 4
+    assert captured["sudo_readonly"] is True
 
 
 def test_serve_dashboard_cli_rejects_invalid_policy(tmp_path, monkeypatch, capsys):
