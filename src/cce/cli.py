@@ -131,20 +131,26 @@ def make_parser():
 
     live_dashboard = subs.add_parser(
         "serve-dashboard",
-        help="Servir o dashboard read-only com atualizações SSE em tempo real.",
+        help="Servir o estado atual da firewall com atualização SSE read-only.",
     )
     live_dashboard.add_argument("--policy", required=True)
     live_dashboard.add_argument(
         "--source",
         choices=("auto", "iptables", "nftables"),
         default="auto",
-        help="Fonte de recolha; auto consulta iptables-save, ip6tables-save e nftables.",
+        help="auto recolhe iptables-save, ip6tables-save e nftables.",
     )
     live_dashboard.add_argument(
         "--interval-ms",
         type=int,
         default=1000,
         help="Intervalo de recolha em milissegundos (mínimo: 1000).",
+    )
+    live_dashboard.add_argument(
+        "--timeout",
+        type=float,
+        default=8,
+        help="Timeout máximo de cada comando de recolha, em segundos.",
     )
     live_dashboard.add_argument("--host", default="127.0.0.1")
     live_dashboard.add_argument("--port", type=int, default=8765)
@@ -162,43 +168,6 @@ def make_parser():
         "--trusted-transport",
         action="store_true",
         help="Confirma que o acesso remoto está atrás de VPN ou proxy HTTPS.",
-    )
-
-    live_dashboard = subs.add_parser(
-        "serve-dashboard",
-        help="Servir o estado atual da firewall com atualização em tempo real (read-only).",
-    )
-    live_dashboard.add_argument(
-        "--policy",
-        help="Política declarativa JSON opcional para comparar com o estado atual.",
-    )
-    live_dashboard.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Interface de escuta; por omissão, apenas localhost.",
-    )
-    live_dashboard.add_argument("--port", type=int, default=8765)
-    live_dashboard.add_argument(
-        "--interval-ms",
-        type=int,
-        default=1000,
-        help="Intervalo nominal de recolha em milissegundos (mínimo 1000).",
-    )
-    live_dashboard.add_argument(
-        "--timeout",
-        type=float,
-        default=5,
-        help="Timeout máximo de cada comando de recolha, em segundos.",
-    )
-    live_dashboard.add_argument(
-        "--username",
-        default="cce",
-        help="Utilizador HTTP Basic quando a autenticação está ativa.",
-    )
-    live_dashboard.add_argument(
-        "--password-env",
-        default="CCE_DASHBOARD_PASSWORD",
-        help="Variável de ambiente com a password HTTP Basic.",
     )
 
     add_packet_evaluation_parser(subs)
@@ -486,7 +455,7 @@ def main():
                 expected_path=args.expected,
                 observed_path=args.observed,
                 history_path=args.history,
-                interval_seconds=args.interval_ms / 1000.0,
+                interval_seconds=args.interval,
                 max_checks=args.checks,
                 on_result=show_result,
             )
@@ -498,38 +467,23 @@ def main():
             return 0
 
         if args.command == "serve-dashboard":
+            policy = load_json(args.policy)
+            errors = validate_policy(policy)
+            if errors:
+                for error in errors:
+                    print(f"ERRO DE POLÍTICA: {error}", file=sys.stderr)
+                return 2
+
             serve_live_dashboard(
                 policy_path=args.policy,
                 host=args.host,
                 port=args.port,
                 source=args.source,
-                interval_seconds=args.interval,
+                interval_seconds=args.interval_ms / 1000.0,
+                timeout_seconds=args.timeout,
                 allow_remote=args.allow_remote,
                 token_env=args.token_env,
                 trusted_transport=args.trusted_transport,
-            )
-            return 0
-
-        if args.command == "serve-dashboard":
-            policy = None
-            if args.policy:
-                policy = load_json(args.policy)
-                errors = validate_policy(policy)
-                if errors:
-                    for error in errors:
-                        print(f"ERRO DE POLÍTICA: {error}", file=sys.stderr)
-                    return 2
-
-            from cce.live_dashboard import serve_live_dashboard
-
-            serve_live_dashboard(
-                host=args.host,
-                port=args.port,
-                policy=policy,
-                interval_ms=args.interval_ms,
-                timeout_seconds=args.timeout,
-                username=args.username,
-                password_env=args.password_env,
             )
             return 0
 
