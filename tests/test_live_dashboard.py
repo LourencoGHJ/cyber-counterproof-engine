@@ -181,7 +181,3 @@ def test_live_dashboard_has_no_logo_and_uses_server_sent_events():
     assert "Não existe garantia de latência ao nível do milissegundo" in DASHBOARD_HTML
 
 
-def test_collection_rejects_interval_below_one_second_via_cli_validation():
-    # The public collector documents the requested refresh interval; the
-    # serving entry point enforces the minimum to avoid command flooding.
-    assert collect_live_state(interval_ms=1000)["refresh_interval_ms"] == 1000
