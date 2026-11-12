@@ -131,7 +131,10 @@ def test_cli_writes_consolidated_report_and_returns_inconclusive(
     )
 
     assert main() == 3
-    assert "CCE: INCONCLUSIVE" in capsys.readouterr().out
+    output_text = capsys.readouterr().out
+    assert "CCE: INCONCLUSIVE" in output_text
+    assert "Ciclos potenciais: 0" in output_text
+    assert "Chains sem caminho: 0" in output_text
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["operation"] == "analyze_snapshot"
     assert report["summary"]["families_analyzed"] == 1
