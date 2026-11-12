@@ -129,6 +129,20 @@ def make_parser():
 
     add_packet_evaluation_parser(subs)
 
+    snapshot_analysis = subs.add_parser(
+        "analyze-snapshot",
+        help="Consolidar análise offline de snapshots iptables-save.",
+    )
+    snapshot_analysis.add_argument(
+        "--ipv4",
+        help="Snapshot iptables-save IPv4 (opcional se for fornecido IPv6).",
+    )
+    snapshot_analysis.add_argument(
+        "--ipv6",
+        help="Snapshot ip6tables-save IPv6 (opcional se for fornecido IPv4).",
+    )
+    snapshot_analysis.add_argument("--output", required=True)
+
     conflicts = subs.add_parser(
         "analyze-rule-conflicts",
         help="Detetar regras redundantes, sombreadas e decisões sobrepostas.",
@@ -153,6 +167,48 @@ def main():
 
         if args.command == "evaluate-scenarios":
             return run_packet_scenarios(args)
+
+        if args.command == "analyze-snapshot":
+            from cce.snapshot_analysis import analyze_firewall_snapshots
+
+            if not args.ipv4 and not args.ipv6:
+                print(
+                    "ERRO: fornece pelo menos --ipv4 ou --ipv6.",
+                    file=sys.stderr,
+                )
+                return 2
+
+            snapshots = {}
+            for family, argument in (
+                ("ipv4", args.ipv4),
+                ("ipv6", args.ipv6),
+            ):
+                if not argument:
+                    continue
+
+                snapshot_path = Path(argument)
+                snapshots[family] = {
+                    "path": str(snapshot_path),
+                    "sha256": sha256_file(snapshot_path),
+                    "text": snapshot_path.read_text(encoding="utf-8"),
+                }
+
+            report = analyze_firewall_snapshots(snapshots)
+            write_json_report(report, args.output)
+            summary = report["summary"]
+            print(
+                f"CCE: {report['status']} | "
+                f"Famílias: {summary['families_analyzed']} | "
+                f"Cadeias: {summary['chains_total']} | "
+                f"Regras: {summary['rules_total']} | "
+                f"Conflitos: {summary['rule_conflict_findings']} | "
+                f"Candidatos SSH: {summary['ssh_rule_candidates']}"
+            )
+            print(f"Relatório: {args.output}")
+
+            if summary["rule_conflict_findings"]:
+                return 1
+            return 3
 
         if args.command == "analyze-rule-conflicts":
             snapshot_path = Path(args.snapshot)
@@ -532,7 +588,7 @@ def main():
     except ValueError as exc:
         if args.command not in {
             "compare-policy", "compare-live", "compare-iptables-save",
-            "analyze-rule-conflicts", "monitor", "dashboard"
+            "analyze-rule-conflicts", "analyze-snapshot", "monitor", "dashboard"
         }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)
