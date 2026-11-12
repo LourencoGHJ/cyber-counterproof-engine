@@ -953,7 +953,7 @@ def serve_live_dashboard(
     actual_host, actual_port = server.server_address[:2]
     print(
         f"Dashboard CCE: http://{actual_host}:{actual_port} "
-        f"| fonte={source} | intervalo={interval_seconds:g}s"
+        f"| fonte={source} | intervalo={interval_seconds * 1000:g}ms"
     )
     if actual_host in {"0.0.0.0", "::"}:
         print(
