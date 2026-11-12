@@ -31,6 +31,31 @@ def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _snapshot_fingerprint(snapshot: dict[str, Any]) -> str:
+    """Identifica alterações materiais, ignorando timestamps e medições de latência."""
+    volatile = {
+        "updated_at_utc",
+        "last_checked_at_utc",
+        "last_changed_at_utc",
+        "collection_duration_ms",
+        "last_collection_duration_ms",
+        "last_cycle_duration_ms",
+        "interval_seconds",
+        "interval_ms",
+        "sequence",
+        "data_changed",
+    }
+    stable = {key: value for key, value in snapshot.items() if key not in volatile}
+    payload = json.dumps(
+        stable,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+    return _sha256(payload)
+
+
 def _public_findings(values: Any) -> list[dict[str, Any]]:
     """Constrói uma lista limitada de findings sem divulgar regras ou seletores."""
     if not isinstance(values, list):
@@ -331,24 +356,33 @@ class LiveSnapshotCollector:
 
 
 class LiveState:
-    """Partilha snapshots entre o recolhedor e clientes HTTP/SSE."""
+    """Partilha alterações de estado e medições de recolha entre HTTP/SSE."""
+
+    MIN_INTERVAL_SECONDS = 0.1
 
     def __init__(
         self,
         collector: LiveSnapshotCollector,
         interval_seconds: float,
     ) -> None:
-        if interval_seconds < 1.0:
+        if interval_seconds < self.MIN_INTERVAL_SECONDS:
             raise ValueError(
-                "O intervalo mínimo é 1 segundo para limitar a carga de recolha."
+                "O intervalo mínimo é 100 ms. Intervalos inferiores aumentam "
+                "a carga e não garantem menor latência real."
             )
         self.collector = collector
         self.interval_seconds = interval_seconds
+        self.interval_ms = round(interval_seconds * 1000)
         self.condition = threading.Condition()
         self.stop_event = threading.Event()
         self.sequence = 0
+        self._fingerprint: str | None = None
         self.current: dict[str, Any] = {
             "updated_at_utc": None,
+            "last_checked_at_utc": None,
+            "last_changed_at_utc": None,
+            "last_collection_duration_ms": None,
+            "last_cycle_duration_ms": None,
             "status": "STARTING",
             "source": collector.requested_source,
             "scope": "not_collected",
@@ -359,7 +393,9 @@ class LiveState:
             "limitations": [],
             "evidence": {},
             "interval_seconds": interval_seconds,
+            "interval_ms": self.interval_ms,
             "sequence": 0,
+            "data_changed": False,
         }
         self.thread = threading.Thread(
             target=self._run,
@@ -368,6 +404,8 @@ class LiveState:
         )
 
     def start(self) -> None:
+        if self.thread.is_alive():
+            return
         self.thread.start()
 
     def stop(self) -> None:
@@ -382,12 +420,27 @@ class LiveState:
             value = copy.deepcopy(self.current)
             value["sequence"] = self.sequence
             value["interval_seconds"] = self.interval_seconds
+            value["interval_ms"] = self.interval_ms
             return value
+
+    def heartbeat(self) -> dict[str, Any]:
+        """Devolve apenas frescura/latência, sem reenviar findings inalterados."""
+        with self.condition:
+            return {
+                "sequence": self.sequence,
+                "last_checked_at_utc": self.current.get("last_checked_at_utc"),
+                "last_changed_at_utc": self.current.get("last_changed_at_utc"),
+                "last_collection_duration_ms": self.current.get(
+                    "last_collection_duration_ms"
+                ),
+                "last_cycle_duration_ms": self.current.get("last_cycle_duration_ms"),
+                "interval_ms": self.interval_ms,
+            }
 
     def wait_for_update(
         self,
         previous_sequence: int,
-        timeout: float = 15.0,
+        timeout: float = 1.0,
     ) -> tuple[int, dict[str, Any] | None]:
         with self.condition:
             self.condition.wait_for(
@@ -400,15 +453,42 @@ class LiveState:
 
     def _run(self) -> None:
         while not self.stop_event.is_set():
-            started = time.monotonic()
+            cycle_started = time.monotonic()
             result = self.collector.collect()
+            checked_at = result.get("updated_at_utc") or _utc_now()
+            fingerprint = _snapshot_fingerprint(result)
+            cycle_duration_ms = round(
+                (time.monotonic() - cycle_started) * 1000,
+                2,
+            )
+            collection_duration_ms = result.get("collection_duration_ms")
+
             with self.condition:
-                self.sequence += 1
-                result["sequence"] = self.sequence
-                result["interval_seconds"] = self.interval_seconds
-                self.current = result
-                self.condition.notify_all()
-            elapsed = time.monotonic() - started
+                changed = fingerprint != self._fingerprint
+                if changed:
+                    self.sequence += 1
+                    self._fingerprint = fingerprint
+                    result["sequence"] = self.sequence
+                    result["updated_at_utc"] = checked_at
+                    result["last_checked_at_utc"] = checked_at
+                    result["last_changed_at_utc"] = checked_at
+                    result["last_collection_duration_ms"] = collection_duration_ms
+                    result["last_cycle_duration_ms"] = cycle_duration_ms
+                    result["interval_seconds"] = self.interval_seconds
+                    result["interval_ms"] = self.interval_ms
+                    result["data_changed"] = True
+                    self.current = result
+                    self.condition.notify_all()
+                else:
+                    # Confirma a recolha sem criar eventos ou histórico duplicados.
+                    self.current["last_checked_at_utc"] = checked_at
+                    self.current["last_collection_duration_ms"] = collection_duration_ms
+                    self.current["last_cycle_duration_ms"] = cycle_duration_ms
+                    self.current["interval_seconds"] = self.interval_seconds
+                    self.current["interval_ms"] = self.interval_ms
+                    self.current["data_changed"] = False
+
+            elapsed = time.monotonic() - cycle_started
             self.stop_event.wait(max(0.0, self.interval_seconds - elapsed))
 
 
@@ -590,15 +670,16 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     badge.textContent = status;
     badge.className = "badge badge-" + (["PASS","DRIFT","ERROR","INCONCLUSIVE"].includes(status) ? status : "UNKNOWN");
     setText("description", snapshot.error || descriptions[status] || "Resultado recebido do CCE.");
-    setText("updated", snapshot.updated_at_utc ? "Atualizado " + snapshot.updated_at_utc : "Ainda sem atualização");
+    const checkedAt = snapshot.last_checked_at_utc || snapshot.updated_at_utc;
+    setText("updated", checkedAt ? "Última recolha " + checkedAt : "Ainda sem recolha");
     setText("source", snapshot.source);
     const summary = snapshot.summary || {};
     setText("rules", summary.iptables_rules_total ?? 0);
     setText("nft-rules", summary.nftables_rules_total ?? 0);
     setText("nft-chains", summary.nftables_base_chains ?? 0);
     setText("findings-count", Array.isArray(snapshot.findings) ? snapshot.findings.length : 0);
-    setText("duration", snapshot.collection_duration_ms);
-    setText("coverage", snapshot.scope ? "Âmbito: " + snapshot.scope + " · Intervalo configurado: " + snapshot.interval_seconds + " s" : "");
+    setText("duration", snapshot.last_collection_duration_ms ?? snapshot.collection_duration_ms);
+    setText("coverage", snapshot.scope ? "Âmbito: " + snapshot.scope + " · Intervalo: " + (snapshot.interval_ms ?? Math.round((snapshot.interval_seconds || 0) * 1000)) + " ms · Ciclo: " + (snapshot.last_cycle_duration_ms ?? "—") + " ms" : "");
     updateFindings(snapshot.findings || []);
     if (isNewUpdate) updateHistory(snapshot);
     const warnings = [...(snapshot.warnings || []), ...(snapshot.partial ? ["Recolha parcial; consulta as limitações antes de interpretar o resultado."] : [])];
@@ -646,6 +727,23 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     try { render(JSON.parse(event.data)); }
     catch (_) { connection.textContent = "Evento inválido"; connection.className = "connection disconnected"; }
   };
+  events.addEventListener("heartbeat", (event) => {
+    try {
+      const heartbeat = JSON.parse(event.data);
+      if (heartbeat.last_checked_at_utc) {
+        setText("updated", "Última recolha " + heartbeat.last_checked_at_utc);
+      }
+      if (heartbeat.last_collection_duration_ms !== undefined) {
+        setText("duration", heartbeat.last_collection_duration_ms);
+      }
+      if (heartbeat.last_cycle_duration_ms !== undefined) {
+        setText("coverage", "Intervalo: " + heartbeat.interval_ms + " ms · Ciclo: " + heartbeat.last_cycle_duration_ms + " ms");
+      }
+    } catch (_) {
+      connection.textContent = "Heartbeat inválido";
+      connection.className = "connection disconnected";
+    }
+  });
   events.onerror = () => {
     connection.textContent = "A reconectar…";
     connection.className = "connection disconnected";
@@ -788,10 +886,19 @@ def create_dashboard_server(
                     while not state.stop_event.is_set():
                         current_sequence, current = state.wait_for_update(
                             sequence,
-                            timeout=15,
+                            timeout=1.0,
                         )
                         if current is None:
-                            write_chunk(b": keep-alive\n\n")
+                            heartbeat = json.dumps(
+                                state.heartbeat(),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            event = (
+                                b"event: heartbeat\n"
+                                + ("data: " + heartbeat + "\n\n").encode("utf-8")
+                            )
+                            write_chunk(event)
                             continue
                         sequence = current_sequence
                         payload = json.dumps(
