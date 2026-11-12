@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -209,11 +210,33 @@ def collect_live_state(
     sources: dict[str, dict[str, Any]] = {}
     snapshots: dict[str, dict[str, str]] = {}
 
+    # Run the three fixed read-only listing commands concurrently so one
+    # slow firewall frontend does not unnecessarily delay the other sources.
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="cce-live-source") as pool:
+        futures = {
+            "ipv4": pool.submit(
+                _run_read_only_command, "iptables-save", (), timeout_seconds
+            ),
+            "ipv6": pool.submit(
+                _run_read_only_command, "ip6tables-save", (), timeout_seconds
+            ),
+            "nftables": pool.submit(
+                _run_read_only_command,
+                "nft",
+                ("-j", "list", "ruleset"),
+                timeout_seconds,
+            ),
+        }
+        source_results = {
+            name: future.result()
+            for name, future in futures.items()
+        }
+
     for family, command in (
         ("ipv4", "iptables-save"),
         ("ipv6", "ip6tables-save"),
     ):
-        metadata, output = _run_read_only_command(command, (), timeout_seconds)
+        metadata, output = source_results[family]
         sources[family] = {"label": f"{command} ({family.upper()})", **metadata}
         if output is not None:
             snapshots[family] = {
@@ -222,11 +245,7 @@ def collect_live_state(
                 "text": output,
             }
 
-    nft_metadata, nft_output = _run_read_only_command(
-        "nft",
-        ("-j", "list", "ruleset"),
-        timeout_seconds,
-    )
+    nft_metadata, nft_output = source_results["nftables"]
     sources["nftables"] = {"label": "nft -j list ruleset", **nft_metadata}
 
     nft_snapshot: dict[str, Any] | None = None
