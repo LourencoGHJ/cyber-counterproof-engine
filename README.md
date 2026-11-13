@@ -24,8 +24,20 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Chain-flow analysis:** maps explicit iptables jump/goto references, structural reachability from base chains, unresolved targets, and potential recursive chain components.
 - **Policy-aware consolidated analysis:** optionally compares declared base-chain policies and supported rule selectors with supplied IPv4/IPv6 snapshots, retaining policy evidence hashes.
 - **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
+- **Cross-platform adapter foundation:** detects Linux, Windows, and macOS; Linux Netfilter and Windows Defender Firewall adapters are implemented, while macOS support remains planned.
 
-## DevSecOps in the development lifecycle
+## Platform support and validation
+
+CCE uses a shared adapter contract and platform detection. Adapter implementation and real-host validation are tracked separately:
+
+| Platform | Firewall integration | Current validation |
+|---|---|---|
+| Linux | Netfilter: `iptables-save`, `ip6tables-save`, and nftables read-only collection | Implemented; real read-only collection executed on Manjaro Linux |
+| Windows | Windows Defender Firewall through PowerShell and `NetSecurity` / `ActiveStore` | Adapter implemented and simulated tests present; real Windows 11 validation remains open ([#20](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20)) |
+| macOS | PF and Application Firewall | Planned; not implemented ([#21](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21)) |
+
+A shared adapter interface does not mean every platform has equivalent feature coverage or operational validation. The Linux adapter is the only adapter in this project state that has been exercised against a real host. Windows and macOS support must not be represented as production-validated.
+
 
 The repository defines automated security checks in GitHub Actions. The workflows run on code changes and, where applicable, on a schedule.
 
@@ -53,6 +65,17 @@ Requirements: Python 3.11 or later. The nft utility is also required for the fir
 On Windows PowerShell, activate the environment with **.venv\Scripts\Activate.ps1**. In Windows CMD, use **.venv\Scripts\activate.bat**. After activation, the `cce` command is available. Without activation, invoke **.venv\Scripts\cce.exe** directly (for example, `.venv\Scripts\cce.exe --help`).
 
 ## Usage examples
+
+Identify the host and check available CCE capabilities:
+
+    cce doctor
+    cce platform-info
+
+Run a one-shot read-only firewall collection on a Linux host:
+
+    cce collect --policy config/policy.json --once --source auto --timeout 10 --sudo-readonly --output reports/collection.json
+
+The `--sudo-readonly` option is for hosts where the fixed firewall-listing commands require elevation. CCE does not run the web service as root and does not apply, remove, or modify rules.
 
 Audit the example policy:
 
@@ -159,9 +182,21 @@ Compare declarative policy rules with IPv4/IPv6 iptables-save snapshots:
 
     cce compare-iptables-save --policy config/policy.json --ipv4 /path/to/iptables.save --ipv6 /path/to/ip6tables.save --output reports/semantic-comparison.json
 
-Rule comparison supports the policy fields `chain`, `action`, `protocol`, `source`, `destination_port` and the optional `connection_states` list. Connection states use the supported iptables values `INVALID`, `NEW`, `ESTABLISHED`, `RELATED`, `UNTRACKED`, `SNAT` and `DNAT`; `--ctstate` and the legacy `--state` selector are compared as sets. An omitted `connection_states` field means that the policy does not restrict connection state. Exact sets are matched, observed subsets are classified as narrower scope, observed supersets as broader scope, disjoint sets as missing, and partial intersections as partial overlap. Negated state selectors remain `INCONCLUSIVE`. The comparator also classifies missing rules, action mismatches and broader/narrower scopes for the other supported fields. A broader ACCEPT rule or a narrower DROP rule is flagged as a potential exposure; the inverse cases are classified as scope/coverage deviations. Extra observed selectors that the policy schema cannot express (for example destination address, interfaces, source ports or TCP flags), multiple candidates, and partially interpreted rules remain `INCONCLUSIVE`. The `service` field is treated as a descriptive label, not translated into firewall semantics. Comparison is per rule and does not model first-match order, user-chain reachability, NAT, routing, or aggregation of multiple rules. Even exact supported-field matches do not cause a global `PASS`.
+Rule comparison supports the policy fields `chain`, `action`, `protocol`, `source`, `destination_port`, optional `connection_states`, and exact `input_interface` / `output_interface` names. Connection states use the supported iptables values `INVALID`, `NEW`, `ESTABLISHED`, `RELATED`, `UNTRACKED`, `SNAT` and `DNAT`; `--ctstate` and the legacy `--state` selector are compared as sets. An omitted field does not impose that selector as a policy restriction.
+
+Interface names are compared exactly. A rule constrained to one interface is narrower than a policy that permits any interface; an observed rule without an interface restriction is broader than a policy that requires one; conflicting exact interface names are disjoint. Wildcards (for example `eth+`), negated interface selectors, and malformed or unsupported selectors remain `INCONCLUSIVE`. The schema does not silently reinterpret interface patterns as exact names.
+
+The comparator classifies exact matches, broader/narrower scopes, disjoint scopes, partial overlaps, missing rules and action mismatches. A broader ACCEPT rule or a narrower DROP rule is flagged as a potential exposure; other deviations retain their respective scope/coverage classifications. The `service` field is descriptive and is not translated into firewall semantics.
+
+For supported JUMP/GOTO paths, CCE follows user-chain transfers and RETURN behaviour and intersects the supported selectors along the path. A path is conclusive only where the intersection covers the complete policy scope. It does not yet aggregate multiple partial branches to prove that their union covers one policy rule; those cases remain `INCONCLUSIVE` and are tracked in [#18](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18). Negated conditions, partially interpreted rules, unsupported selectors, recursive paths and ambiguous candidates remain conservative.
+
+The comparator is limited to the supported iptables `filter` subset for INPUT/OUTPUT/FORWARD policies. It does not establish kernel-level packet reachability, complete first-match semantics for every construct, NAT or routing behaviour. Native nftables semantic coverage is also limited to base-chain policies and structural inventory; see [#19](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19). A rule-level match is not a global compliance verdict.
 
 The same commands can be run with **python -m cce.cli** after the project is installed in a Python environment.
+
+## Current roadmap
+
+The implementation status, evidence, known limitations and prioritised work are maintained in [docs/ROADMAP.md](docs/ROADMAP.md). Active work items: [#17 interface-aware policy comparison](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/17), [#18 partial branch aggregation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18), [#19 native nftables semantics](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19), [#20 real Windows validation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20), and [#21 macOS adapters](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21).
 
 ## Security scope and limitations
 

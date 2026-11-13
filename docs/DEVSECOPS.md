@@ -78,6 +78,18 @@ Recommended setup:
 
 Adding workflows does not enable branch protection automatically. Review the exact check names displayed by GitHub before choosing the required checks. The GitHub integration used for this change can update code but does not expose a write operation for branch rules, so this settings change must be saved in GitHub.
 
+## Latest local validation record (2026-11-13)
+
+The Manjaro development working tree recorded the following results:
+
+- Full pytest suite: **295 passed**.
+- Bandit: **No issues identified**; 12 Low, 0 Medium, 0 High severity findings.
+- pip-audit: no known vulnerabilities in the checked non-editable dependencies. The CCE distribution is installed in editable mode and is skipped by `--skip-editable`.
+- `pip check`: no broken requirements.
+- `git diff --check`: clean.
+
+These are local working-tree results recorded before publication of the corresponding changes to the remote feature branch. They are not a substitute for GitHub Actions on the published commit. A clean scan does not prove the absence of all vulnerabilities.
+
 ## Limitations and maintenance
 
 - A clean scan does not prove that a project has no vulnerabilities; it only means the configured tools did not report issues in the areas they examined.
