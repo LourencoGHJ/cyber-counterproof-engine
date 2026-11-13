@@ -341,3 +341,7 @@ def test_dashboard_script_does_not_query_associated_filters_per_rule():
     assert "Get-NetFirewallAddressFilter" not in defender.DASHBOARD_POWERSHELL_SCRIPT
     assert "Get-NetFirewallApplicationFilter" not in defender.DASHBOARD_POWERSHELL_SCRIPT
 
+def test_powershell_script_uses_dedicated_interface_type_filter():
+    assert "Get-NetFirewallInterfaceTypeFilter" in defender.POWERSHELL_SCRIPT
+    assert "$interfaceTypeFilter.InterfaceType" in defender.POWERSHELL_SCRIPT
+    assert "$interfaces.InterfaceType" not in defender.POWERSHELL_SCRIPT
