@@ -27,7 +27,6 @@ Este documento distingue implementação, validação local, validação remota 
 | Linux Netfilter | Implementado e validado em Manjaro | Recolha read-only real |
 | nftables nativo | Parcial | Políticas de base chains e inventário estrutural; sem cobertura semântica total |
 | Windows Defender Firewall | Adaptador implementado | Testes simulados; validação real Windows 11 pendente |
-| macOS PF/Application Firewall | Planeado | Sem adaptador |
 | Dashboard HTTP/SSE | Implementado | Local por omissão, GET-only, recolha read-only; usa polling |
 | DevSecOps | Workflows configurados e executados | CI, CodeQL, Gitleaks, Terraform/Checkov, Trivy |
 
@@ -66,7 +65,6 @@ A análise nftables continua limitada às políticas das base chains e ao invent
 ### P2 — Validação e expansão multiplataforma
 
 - [#20 — Validar Windows Defender num Windows 11 real](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20).
-- [#21 — Implementar adaptadores macOS PF/Application Firewall](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21).
 
 ## Critérios de qualidade e conclusão
 
@@ -86,4 +84,4 @@ O objetivo de conclusão do CCE é uma ferramenta defensiva, reproduzível e ope
 - PR #15: integrado na `main`.
 - Issue #17: fechada como concluída.
 - PR #22: documentação a aguardar integração na `main`.
-- Issues #18–#21: trabalho futuro aberto; não fazem parte das funcionalidades concluídas nesta baseline.
+- Issues #18–#20: trabalho futuro aberto; não fazem parte das funcionalidades concluídas nesta baseline.
