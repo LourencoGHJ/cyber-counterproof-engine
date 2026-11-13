@@ -124,6 +124,60 @@ ConvertTo-Json -InputObject $result -Depth 10 -Compress
 """
 
 
+DASHBOARD_POWERSHELL_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+Import-Module NetSecurity -ErrorAction Stop
+
+$profiles = @(
+    Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop |
+    ForEach-Object {
+        [pscustomobject]@{
+            name = [string]$_.Name
+            enabled = [string]$_.Enabled
+            default_inbound_action = [string]$_.DefaultInboundAction
+            default_outbound_action = [string]$_.DefaultOutboundAction
+        }
+    }
+)
+
+$rules = @(
+    Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop |
+    Select-Object Name, Enabled, Direction, Action
+)
+
+$normalizedRules = @(
+    $rules |
+    Sort-Object Name |
+    Select-Object Name, Enabled, Direction, Action
+)
+$ruleFingerprint = ConvertTo-Json -InputObject $normalizedRules -Depth 4 -Compress
+
+$summary = [pscustomobject]@{
+    profiles_total = $profiles.Count
+    profiles_enabled = @($profiles | Where-Object { $_.enabled -eq 'True' }).Count
+    rules_total = $rules.Count
+    rules_enabled = @($rules | Where-Object { $_.Enabled -eq 'True' }).Count
+    rules_disabled = @($rules | Where-Object { $_.Enabled -ne 'True' }).Count
+    inbound_rules = @($rules | Where-Object { $_.Direction -eq 'Inbound' }).Count
+    outbound_rules = @($rules | Where-Object { $_.Direction -eq 'Outbound' }).Count
+    allow_rules = @($rules | Where-Object { $_.Action -eq 'Allow' }).Count
+    block_rules = @($rules | Where-Object { $_.Action -eq 'Block' }).Count
+}
+
+$result = [pscustomobject]@{
+    schema_version = 1
+    platform = 'windows'
+    policy_store = 'ActiveStore'
+    collected_at_utc = [DateTime]::UtcNow.ToString('o')
+    summary = $summary
+    profiles = $profiles
+    rule_fingerprint = $ruleFingerprint
+}
+
+ConvertTo-Json -InputObject $result -Depth 8 -Compress
+"""
+
+
 def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -194,6 +248,142 @@ class WindowsDefenderFirewallAdapter(FirewallAdapter):
             "note": (
                 "A presença de PowerShell não comprova a disponibilidade "
                 "do módulo NetSecurity. Essa verificação ocorre na recolha."
+            ),
+        }
+
+    def collect_summary(self) -> dict[str, Any]:
+        """Recolhe apenas contagens e perfis para o dashboard periódico.
+
+        Evita consultar cinco filtros associados para cada regra: a vista do
+        dashboard não necessita desses seletores nem publica regras individuais.
+        """
+        if platform.system() != "Windows":
+            raise RuntimeError(
+                "Windows Defender Firewall só pode ser consultado no Windows."
+            )
+
+        executable = self._powershell()
+        if not executable:
+            raise RuntimeError(
+                "PowerShell não encontrado. Instala ou disponibiliza "
+                "Windows PowerShell."
+            )
+
+        command = [
+            executable,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            DASHBOARD_POWERSHELL_SCRIPT,
+        ]
+        started = time.monotonic()
+
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Resumo Windows excedeu {self.timeout_seconds:g} segundos."
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"Não foi possível iniciar PowerShell: {exc}"
+            ) from exc
+
+        if result.returncode != 0:
+            error = result.stderr.strip() or "erro PowerShell desconhecido"
+            raise RuntimeError(
+                "Falha na recolha resumida Windows Defender Firewall: " + error
+            )
+
+        raw = result.stdout.strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "PowerShell não devolveu JSON válido para o dashboard."
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise RuntimeError("Resumo Windows inválido.")
+
+        raw_profiles = _as_list(payload.get("profiles"))
+        raw_summary = payload.get("summary")
+        if not isinstance(raw_summary, dict):
+            raise RuntimeError("Resumo de regras Windows inválido.")
+
+        profiles = []
+        for item in raw_profiles:
+            if not isinstance(item, dict):
+                continue
+            profiles.append(
+                {
+                    "name": str(item.get("name", "")),
+                    "enabled": _as_bool(item.get("enabled")) is True,
+                    "default_inbound_action": str(
+                        item.get("default_inbound_action", "")
+                    ),
+                    "default_outbound_action": str(
+                        item.get("default_outbound_action", "")
+                    ),
+                }
+            )
+
+        summary_fields = (
+            "profiles_total",
+            "profiles_enabled",
+            "rules_total",
+            "rules_enabled",
+            "rules_disabled",
+            "inbound_rules",
+            "outbound_rules",
+            "allow_rules",
+            "block_rules",
+        )
+        summary = {
+            key: int(raw_summary.get(key, 0) or 0)
+            for key in summary_fields
+        }
+        fingerprint = payload.get("rule_fingerprint")
+        if not isinstance(fingerprint, str):
+            raise RuntimeError("Fingerprint das regras Windows inválido.")
+
+        return {
+            "schema_version": 1,
+            "adapter_id": self.adapter_id,
+            "platform": "windows",
+            "source": "Windows Defender Firewall ActiveStore",
+            "policy_store": "ActiveStore",
+            "status": "INCONCLUSIVE",
+            "partial": True,
+            "collected_at_utc": (
+                payload.get("collected_at_utc")
+                or datetime.now(timezone.utc).isoformat()
+            ),
+            "summary": summary,
+            "profiles": profiles,
+            "evidence": {
+                "windows_active_store": {
+                    "sha256": hashlib.sha256(
+                        fingerprint.encode("utf-8")
+                    ).hexdigest()
+                }
+            },
+            "warnings": [],
+            "limitations": [
+                "Esta vista é um inventário agregado do ActiveStore.",
+                "Não compara semanticamente as regras Windows com a policy CCE.",
+                "Não publica regras individuais nem seletores no dashboard.",
+                "O estado mantém-se INCONCLUSIVE até existir um analisador Windows.",
+            ],
+            "collection_duration_ms": round(
+                (time.monotonic() - started) * 1000, 2
             ),
         }
 

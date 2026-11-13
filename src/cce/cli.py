@@ -138,9 +138,12 @@ def make_parser():
     live_dashboard.add_argument("--policy", required=True)
     live_dashboard.add_argument(
         "--source",
-        choices=("auto", "iptables", "nftables"),
+        choices=("auto", "iptables", "nftables", "windows-defender"),
         default="auto",
-        help="auto recolhe iptables-save, ip6tables-save e nftables.",
+        help=(
+            "auto deteta a plataforma: Windows Defender no Windows; "
+            "iptables-save e nftables em Linux."
+        ),
     )
     live_dashboard.add_argument(
         "--interval-ms",
