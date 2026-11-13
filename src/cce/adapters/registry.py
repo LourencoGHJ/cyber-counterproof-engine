@@ -43,11 +43,6 @@ def create_firewall_adapter(
             timeout_seconds=timeout_seconds,
         )
 
-    if detected_system == "macos":
-        raise ValueError(
-            "Os adaptadores macOS PF/Application Firewall ainda não estão implementados."
-        )
-
     raise ValueError(
         f"Sistema operativo não suportado pelo CCE: {detected_system}."
     )
