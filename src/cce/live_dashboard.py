@@ -13,6 +13,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -250,7 +251,7 @@ class LiveSnapshotCollector:
                 "O adaptador Windows Defender Firewall não está disponível "
                 "neste host."
             )
-        result = adapter.collect()
+        result = adapter.collect_summary()
         if not isinstance(result, dict):
             raise RuntimeError("O adaptador Windows não devolveu um objeto.")
 
@@ -1147,6 +1148,22 @@ def create_dashboard_server(
     class CCEThreadingHTTPServer(ThreadingHTTPServer):
         daemon_threads = True
         allow_reuse_address = True
+
+        def handle_error(self, request: Any, client_address: Any) -> None:
+            # Fecho de separadores, reconexão SSE e timeouts do browser são
+            # desconexões de cliente normais; não devem inundar o terminal.
+            _, error, _ = sys.exc_info()
+            if isinstance(
+                error,
+                (
+                    BrokenPipeError,
+                    ConnectionResetError,
+                    ConnectionAbortedError,
+                    TimeoutError,
+                ),
+            ):
+                return
+            super().handle_error(request, client_address)
 
     server = CCEThreadingHTTPServer((host, port), DashboardHandler)
     return server
