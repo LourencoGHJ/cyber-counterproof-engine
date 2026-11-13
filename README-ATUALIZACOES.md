@@ -52,9 +52,9 @@ Este documento regista capacidades implementadas, validações efetivamente exec
 | Windows | Defender Firewall / NetSecurity | Implementado; testes simulados; validação real em Windows 11 pendente ([#20](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20)) |
 | macOS | PF / Application Firewall | Planeado, não implementado ([#21](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21)) |
 
-## 3. Validação local registada em 13-11-2026
+## 3. Validação local e CI remota confirmadas em 13-11-2026
 
-Os resultados seguintes foram recolhidos na árvore de trabalho local Manjaro/Python 3.14.7. À data deste registo, as alterações mais recentes ainda aguardavam publicação no branch remoto.
+Os resultados locais seguintes foram recolhidos em Manjaro/Python 3.14.7 para o código publicado no commit `d98996c0d728b40a7e2279e86cf83362d018bf3b`. Esse commit foi integrado na `main` pelo PR #15 (merge commit `a6a1b22da8db7c6a117c8481c4f337d2c9a664d9`). Os quatro workflows GitHub Actions associados ao commit publicado passaram: DevSecOps CI, CodeQL, Secret Scanning e Container Security.
 
 ### Testes e qualidade
 - Suite completa: **295 testes aprovados**.
@@ -99,7 +99,7 @@ O bloqueio atual não é a interpretação de interfaces exatas. As comparaçõe
 ## 5. Registo de Issues
 
 - [#16 — Fundação de adaptadores multiplataforma](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/16) — concluído; histórico preservado.
-- [#17 — Suporte a interfaces exatas na comparação de políticas](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/17) — implementação e validação local concluídas; publicação/CI pendentes.
+- [#17 — Suporte a interfaces exatas na comparação de políticas](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/17) — concluído, publicado, validado por CI e integrado na `main` através do PR #15.
 - [#18 — Agregação de ramos parciais JUMP/GOTO](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18) — trabalho futuro.
 - [#19 — Cobertura semântica nativa nftables](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19) — trabalho futuro.
 - [#20 — Validação real Windows 11](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20) — trabalho futuro.
