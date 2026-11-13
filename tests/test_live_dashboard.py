@@ -844,7 +844,7 @@ def test_windows_dashboard_auto_collects_aggregates_without_exposing_rules(
         def probe(self):
             return {"available": True, "adapter_id": "windows.defender-firewall"}
 
-        def collect(self):
+        def collect_summary(self):
             return {
                 "status": "INCONCLUSIVE",
                 "partial": True,
@@ -904,3 +904,19 @@ def test_live_dashboard_html_contains_windows_inventory_panel():
     assert 'id="windows-details"' in LIVE_HTML
     assert 'id="windows-profiles"' in LIVE_HTML
     assert "Windows Defender Firewall" in LIVE_HTML
+
+
+def test_http_server_suppresses_normal_client_disconnect_errors(monkeypatch, capsys):
+    state = LiveState(FakeCollector(), interval_seconds=1.0)
+    server = create_dashboard_server("127.0.0.1", 0, state)
+    error = ConnectionResetError("browser closed connection")
+    try:
+        monkeypatch.setattr(
+            "cce.live_dashboard.sys.exc_info",
+            lambda: (ConnectionResetError, error, None),
+        )
+        server.handle_error(None, ("127.0.0.1", 12345))
+        assert capsys.readouterr().err == ""
+    finally:
+        server.server_close()
+
