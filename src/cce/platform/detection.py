@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-from pathlib import Path
 from typing import Any
 
 
@@ -25,10 +24,6 @@ def _is_admin(system: str) -> bool:
         return os.geteuid() == 0
 
     return False
-
-
-def _fixed_executable(path: str) -> str | None:
-    return path if Path(path).is_file() else None
 
 
 def _adapter(
@@ -67,7 +62,6 @@ def detect_platform() -> dict[str, Any]:
     systems = {
         "Linux": "linux",
         "Windows": "windows",
-        "Darwin": "macos",
     }
 
     system = systems.get(raw_system, "unknown")
@@ -150,31 +144,6 @@ def detect_platform() -> dict[str, Any]:
             )
         )
 
-    elif system == "macos":
-        adapters.append(
-            _adapter(
-                "macos.pf",
-                "Packet Filter",
-                "planned",
-                {"pfctl": _which("pfctl") or _fixed_executable("/sbin/pfctl")},
-                note="Adaptador PF ainda não implementado.",
-            )
-        )
-
-        adapters.append(
-            _adapter(
-                "macos.application-firewall",
-                "Application Firewall",
-                "planned",
-                {
-                    "socketfilterfw": _fixed_executable(
-                        "/usr/libexec/ApplicationFirewall/socketfilterfw"
-                    )
-                },
-                note="Adaptador Application Firewall ainda não implementado.",
-            )
-        )
-
     return {
         "schema_version": 1,
         "host": host,
@@ -196,7 +165,6 @@ def detect_platform() -> dict[str, Any]:
             "A disponibilidade de um adaptador não significa cobertura semântica total.",
             "Adaptador Windows implementado; validação numa máquina Windows real ainda pendente.",
             "A deteção do PowerShell não confirma a disponibilidade do módulo NetSecurity.",
-            "macOS PF e Application Firewall ainda não possuem adaptadores implementados.",
         ],
     }
 
