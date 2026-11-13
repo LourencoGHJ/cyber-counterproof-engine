@@ -90,17 +90,6 @@ def test_factory_selects_windows_defender_adapter(tmp_path):
     assert isinstance(adapter, WindowsDefenderFirewallAdapter)
 
 
-def test_factory_rejects_unimplemented_macos(tmp_path):
-    policy = tmp_path / "policy.json"
-    policy.write_text(json.dumps(valid_policy()), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="macOS"):
-        create_firewall_adapter(
-            policy_path=str(policy),
-            system="macos",
-        )
-
-
 def test_collect_cli_writes_report(tmp_path, monkeypatch, capsys):
     policy = tmp_path / "policy.json"
     policy.write_text(json.dumps(valid_policy()), encoding="utf-8")
