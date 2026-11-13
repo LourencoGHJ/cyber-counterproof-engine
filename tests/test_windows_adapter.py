@@ -258,3 +258,86 @@ def test_collect_rejects_non_object_snapshot(monkeypatch):
 def test_adapter_rejects_invalid_timeout():
     with pytest.raises(ValueError, match="superior a zero"):
         WindowsDefenderFirewallAdapter(timeout_seconds=0)
+
+
+def test_collect_summary_uses_lightweight_script_and_returns_only_aggregates(
+    monkeypatch,
+):
+    adapter = WindowsDefenderFirewallAdapter(timeout_seconds=7)
+    configure_windows(monkeypatch, adapter)
+    payload = {
+        "schema_version": 1,
+        "platform": "windows",
+        "policy_store": "ActiveStore",
+        "collected_at_utc": "2026-11-13T22:30:00Z",
+        "summary": {
+            "profiles_total": 3,
+            "profiles_enabled": 3,
+            "rules_total": 549,
+            "rules_enabled": 295,
+            "rules_disabled": 254,
+            "inbound_rules": 311,
+            "outbound_rules": 238,
+            "allow_rules": 548,
+            "block_rules": 1,
+        },
+        "profiles": [
+            {
+                "name": "Domain",
+                "enabled": "True",
+                "default_inbound_action": "Block",
+                "default_outbound_action": "Allow",
+            }
+        ],
+        "rule_fingerprint": '[{"Name":"Rule-A","Enabled":true}]',
+    }
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        assert command[-1] == defender.DASHBOARD_POWERSHELL_SCRIPT
+        assert "Get-NetFirewallPortFilter" not in command[-1]
+        assert "Get-NetFirewallAddressFilter" not in command[-1]
+        assert kwargs["timeout"] == 7
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(payload),
+            stderr="",
+        )
+
+    monkeypatch.setattr(defender.subprocess, "run", fake_run)
+
+    result = adapter.collect_summary()
+
+    assert len(calls) == 1
+    assert result["summary"]["rules_total"] == 549
+    assert result["summary"]["rules_enabled"] == 295
+    assert result["profiles"] == [
+        {
+            "name": "Domain",
+            "enabled": True,
+            "default_inbound_action": "Block",
+            "default_outbound_action": "Allow",
+        }
+    ]
+    assert "rules" not in result
+    assert "rule_fingerprint" not in result
+    assert result["evidence"]["windows_active_store"]["sha256"] == hashlib.sha256(
+        payload["rule_fingerprint"].encode("utf-8")
+    ).hexdigest()
+
+
+def test_collect_summary_rejects_non_windows_platform(monkeypatch):
+    adapter = WindowsDefenderFirewallAdapter()
+    monkeypatch.setattr(defender.platform, "system", lambda: "Linux")
+
+    with pytest.raises(RuntimeError, match="só pode ser consultado no Windows"):
+        adapter.collect_summary()
+
+
+def test_dashboard_script_does_not_query_associated_filters_per_rule():
+    assert "Get-NetFirewallRule -PolicyStore ActiveStore" in defender.DASHBOARD_POWERSHELL_SCRIPT
+    assert "Get-NetFirewallPortFilter" not in defender.DASHBOARD_POWERSHELL_SCRIPT
+    assert "Get-NetFirewallAddressFilter" not in defender.DASHBOARD_POWERSHELL_SCRIPT
+    assert "Get-NetFirewallApplicationFilter" not in defender.DASHBOARD_POWERSHELL_SCRIPT
+
