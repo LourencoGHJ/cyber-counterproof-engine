@@ -221,6 +221,44 @@ def test_live_collector_uses_nftables_json_when_iptables_is_unavailable(
     assert result["evidence"]["nftables"]["sha256"]
 
 
+def test_live_collector_does_not_expose_firewall_selectors(tmp_path, monkeypatch):
+    policy_path = tmp_path / 'policy.json'
+    policy_path.write_text(json.dumps(valid_policy()), encoding='utf-8')
+    monkeypatch.setattr(
+        'cce.live_dashboard.shutil.which',
+        lambda name: '/usr/bin/iptables-save' if name == 'iptables-save' else None,
+    )
+    raw_snapshot = (
+        '*filter\n'
+        ':INPUT DROP [0:0]\n'
+        ':OUTPUT ACCEPT [0:0]\n'
+        ':FORWARD DROP [0:0]\n'
+        '-A INPUT -s 203.0.113.77 -d 198.51.100.44 -p tcp --dport 28443 -j ACCEPT\n'
+        'COMMIT\n'
+    )
+
+    def fake_run(command, **kwargs):
+        assert command == ['/usr/bin/iptables-save']
+        return subprocess.CompletedProcess(
+            command, 0, stdout=raw_snapshot, stderr=''
+        )
+
+    monkeypatch.setattr('cce.live_dashboard.subprocess.run', fake_run)
+    result = LiveSnapshotCollector(str(policy_path), source='iptables').collect()
+    rendered = json.dumps(result)
+
+    for sensitive_value in (
+        '203.0.113.77',
+        '198.51.100.44',
+        '28443',
+        '--dport',
+        '-A INPUT',
+    ):
+        assert sensitive_value not in rendered
+
+    assert result['evidence']['iptables']['ipv4']['sha256']
+
+
 def test_live_collector_reports_missing_tools_as_error(tmp_path, monkeypatch):
     policy_path = tmp_path / "policy.json"
     policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
@@ -315,6 +353,30 @@ def test_live_dashboard_html_has_no_branding_and_uses_server_sent_events():
     assert "innerHTML" not in LIVE_HTML
 
 
+def test_local_http_server_rejects_untrusted_host_header():
+    state = LiveState(FakeCollector(), interval_seconds=1.0)
+    server = create_dashboard_server('127.0.0.1', 0, state)
+    worker = threading.Thread(
+        target=server.serve_forever,
+        kwargs={'poll_interval': 0.02},
+        daemon=True,
+    )
+    worker.start()
+    try:
+        address, port = server.server_address[:2]
+        request = Request(
+            f'http://{address}:{port}/healthz',
+            headers={'Host': f'attacker.example:{port}'},
+        )
+        with pytest.raises(HTTPError) as error:
+            urlopen(request, timeout=2)
+        assert error.value.code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+
 def test_local_http_server_serves_dashboard_and_live_status():
     state = LiveState(FakeCollector(), interval_seconds=1.0)
     server = create_dashboard_server(
@@ -381,6 +443,18 @@ def test_remote_http_server_requires_basic_auth():
         with pytest.raises(HTTPError) as error:
             urlopen(url, timeout=2)
         assert error.value.code == 401
+
+        health_url = f"http://127.0.0.1:{port}/healthz"
+        with pytest.raises(HTTPError) as health_error:
+            urlopen(health_url, timeout=2)
+        assert health_error.value.code == 401
+
+        health_request = Request(health_url)
+        credentials = base64.b64encode(f"cce:{token}".encode()).decode("ascii")
+        health_request.add_header("Authorization", "Basic " + credentials)
+        with urlopen(health_request, timeout=2) as response:
+            assert response.status == 200
+            assert json.loads(response.read().decode("utf-8")) == {"ok": True}
 
         request = Request(url)
         credentials = base64.b64encode(f"cce:{token}".encode()).decode("ascii")
@@ -472,6 +546,40 @@ class MutableCollector:
             "evidence": {"snapshot": {"sha256": "same-hash"}},
             "collection_duration_ms": 2.0 + self.calls,
         }
+
+def test_live_state_survives_unexpected_collector_exception_and_recovers(caplog):
+    class RecoveringCollector:
+        requested_source = "test"
+        def __init__(self):
+            self.calls = 0
+        def collect(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("private diagnostic detail")
+            return FakeCollector().collect()
+
+    collector = RecoveringCollector()
+    state = LiveState(collector, interval_seconds=0.1)
+    state.start()
+    try:
+        sequence, failed = state.wait_for_update(0, timeout=1.0)
+        assert sequence == 1
+        assert failed is not None
+        assert failed["status"] == "ERROR"
+        assert "RuntimeError" in json.dumps(failed)
+        assert "private diagnostic detail" not in json.dumps(failed)
+        assert "Falha inesperada na recolha do snapshot CCE" in caplog.text
+        assert "RuntimeError" in caplog.text
+        assert "private diagnostic detail" not in caplog.text
+        assert state.thread.is_alive()
+
+        sequence, recovered = state.wait_for_update(1, timeout=2.0)
+        assert sequence == 2
+        assert recovered is not None
+        assert recovered["status"] == "DRIFT"
+        assert state.thread.is_alive()
+    finally:
+        state.stop()
 
 
 def test_live_state_deduplicates_unchanged_snapshots_and_publishes_real_changes():
@@ -569,12 +677,18 @@ def test_sse_stream_publishes_only_changed_data_and_sends_heartbeats():
 
             collector.status = "DRIFT"
             second_event = ""
+            event_type = "message"
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
                 line = response.readline().decode("utf-8").strip()
-                if line.startswith("data: "):
-                    second_event = line[6:]
-                    break
+                if line.startswith("event: "):
+                    event_type = line[7:]
+                elif line.startswith("data: "):
+                    payload = line[6:]
+                    if event_type != "heartbeat":
+                        second_event = payload
+                        break
+                    event_type = "message"
             assert second_event
             second = json.loads(second_event)
             assert second["sequence"] == 2
@@ -666,12 +780,18 @@ def test_live_collector_data_reaches_http_and_sse_and_changes_when_snapshot_chan
                 "--dport 443", "--dport 22"
             )
             changed_event = ""
+            event_type = "message"
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
                 line = response.readline().decode("utf-8").strip()
-                if line.startswith("data: "):
-                    changed_event = line[6:]
-                    break
+                if line.startswith("event: "):
+                    event_type = line[7:]
+                elif line.startswith("data: "):
+                    payload = line[6:]
+                    if event_type != "heartbeat":
+                        changed_event = payload
+                        break
+                    event_type = "message"
             assert changed_event
             changed_payload = json.loads(changed_event)
             assert changed_payload["sequence"] == 2

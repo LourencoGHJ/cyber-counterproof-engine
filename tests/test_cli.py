@@ -231,7 +231,7 @@ def test_serve_dashboard_cli_loads_policy_and_starts_server(
     def fake_serve(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr("cce.live_dashboard.serve_live_dashboard", fake_serve)
+    monkeypatch.setattr("cce.cli.serve_live_dashboard", fake_serve)
     monkeypatch.setattr(
         "sys.argv",
         [

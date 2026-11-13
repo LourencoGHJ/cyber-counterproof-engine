@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ from cce.live import analyze_live_ruleset
 from cce.models import load_json, validate_policy
 from cce.snapshot_analysis import analyze_firewall_snapshots
 
+logger = logging.getLogger(__name__)
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -227,7 +229,7 @@ class LiveSnapshotCollector:
             "summary": analysis.get("summary", {}),
             "findings": _public_findings(analysis.get("findings", [])),
             "limitations": list(analysis.get("limitations", [])),
-            "evidence": {"nftables": {"sha256": _sha256(raw)}},
+            "evidence": {"sha256": _sha256(raw)},
         }
 
     def collect(self) -> dict[str, Any]:
@@ -443,7 +445,36 @@ class LiveState:
     def _run(self) -> None:
         while not self.stop_event.is_set():
             cycle_started = time.monotonic()
-            result = self.collector.collect()
+            try:
+                result = self.collector.collect()
+                if not isinstance(result, dict):
+                    raise TypeError("collector.collect() nao devolveu um objeto.")
+            except Exception as exc:
+                logger.error(
+                    "Falha inesperada na recolha do snapshot CCE (tipo=%s).",
+                    type(exc).__name__,
+                )
+                result = {
+                    "updated_at_utc": _utc_now(),
+                    "status": "ERROR",
+                    "source": self.collector.requested_source,
+                    "scope": "collection_failed",
+                    "partial": True,
+                    "warnings": [
+                        f"Falha inesperada na recolha ({type(exc).__name__}).",
+                    ],
+                    "summary": {},
+                    "findings": [],
+                    "limitations": [
+                        "A recolha falhou; nao e possivel confirmar o estado atual da firewall.",
+                    ],
+                    "error": "Falha inesperada na recolha. Consultar os registos do processo.",
+                    "evidence": {},
+                    "collection_duration_ms": round(
+                        (time.monotonic() - cycle_started) * 1000,
+                        2,
+                    ),
+                }
             checked_at = result.get("updated_at_utc") or _utc_now()
             fingerprint = _snapshot_fingerprint(result)
             cycle_duration_ms = round(
@@ -776,6 +807,29 @@ def validate_remote_access(
     return True
 
 
+def _valid_local_host_header(value: str, expected_port: int) -> bool:
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    if any(character in value for character in '/?#@'):
+        return False
+    try:
+        parsed = urlsplit('//'+value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return False
+    if not hostname or parsed.path or parsed.query or parsed.fragment:
+        return False
+    if (port if port is not None else 80) != expected_port:
+        return False
+    if hostname.lower() == 'localhost':
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def create_dashboard_server(
     host: str,
     port: int,
@@ -836,11 +890,18 @@ def create_dashboard_server(
             return False
 
         def do_GET(self) -> None:
+            if not require_auth and not _valid_local_host_header(
+                self.headers.get('Host', ''),
+                self.server.server_address[1],
+            ):
+                self.close_connection = True
+                self._send_json({'error': 'invalid_host'}, code=403)
+                return
             path = urlsplit(self.path).path
+            if not self._check_auth():
+                return
             if path == "/healthz":
                 self._send_json({"ok": True})
-                return
-            if not self._check_auth():
                 return
 
             if path == "/":
@@ -959,7 +1020,11 @@ def serve_live_dashboard(
         f"Dashboard CCE: http://{actual_host}:{actual_port} "
         f"| fonte={source} | intervalo={interval_seconds * 1000:g}ms"
     )
-    if actual_host in {"0.0.0.0", "::"}:
+    try:
+        is_all_interfaces = ipaddress.ip_address(actual_host).is_unspecified
+    except ValueError:
+        is_all_interfaces = False
+    if is_all_interfaces:
         print(
             "Acesso remoto ativo: protege o serviço com o transporte privado/"
             "HTTPS configurado e mantém o token fora do histórico do terminal."
