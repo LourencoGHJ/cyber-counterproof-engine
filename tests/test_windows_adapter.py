@@ -258,3 +258,9 @@ def test_collect_rejects_non_object_snapshot(monkeypatch):
 def test_adapter_rejects_invalid_timeout():
     with pytest.raises(ValueError, match="superior a zero"):
         WindowsDefenderFirewallAdapter(timeout_seconds=0)
+
+
+def test_powershell_script_uses_dedicated_interface_type_filter():
+    assert "Get-NetFirewallInterfaceTypeFilter" in defender.POWERSHELL_SCRIPT
+    assert "$interfaceTypeFilter.InterfaceType" in defender.POWERSHELL_SCRIPT
+    assert "$interfaces.InterfaceType" not in defender.POWERSHELL_SCRIPT
