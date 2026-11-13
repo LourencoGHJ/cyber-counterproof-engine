@@ -225,7 +225,7 @@ def _build_policy_comparison(
         "findings": findings,
         "limitations": [
             "As políticas base são comparadas apenas para INPUT, OUTPUT e FORWARD na tabela filter, nas famílias fornecidas.",
-            "A comparação de regras cobre chain, action, protocol, source, destination_port e connection_states.",
+            "A comparação de regras cobre chain, action, protocol, source, destination_port, connection_states e interfaces exatas de entrada e saída.",
             "O campo service da política é descritivo e não é convertido em condições iptables.",
             "Regras parcialmente interpretadas, seletores não modelados e múltiplos candidatos permanecem INCONCLUSIVE.",
             "A comparação é por regra; não agrega regras nem modela ordem first-match, fluxo de user chains, NAT, routing ou alcance real dos pacotes.",

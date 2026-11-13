@@ -75,6 +75,7 @@ def _public_findings(values: Any) -> list[dict[str, Any]]:
         "hook",
         "rule_id",
         "observed_lines",
+        "unmodelled_selectors",
         "impact",
         "reason",
         "detail",

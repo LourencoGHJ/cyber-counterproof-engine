@@ -804,3 +804,24 @@ def test_live_collector_data_reaches_http_and_sse_and_changes_when_snapshot_chan
         server.shutdown()
         server.server_close()
         worker.join(timeout=2)
+
+def test_public_findings_exposes_safe_selector_labels_only():
+    from cce.live_dashboard import _public_findings
+
+    result = _public_findings(
+        [
+            {
+                "category": "policy_comparison",
+                "unmodelled_selectors": ["input_interface", "tcp_flags"],
+                "raw_rule": "example sensitive rule",
+                "source_ip": "192.0.2.10",
+            }
+        ]
+    )
+
+    assert result == [
+        {
+            "category": "policy_comparison",
+            "unmodelled_selectors": ["input_interface", "tcp_flags"],
+        }
+    ]

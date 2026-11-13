@@ -47,6 +47,30 @@ def _valid_port(value: Any) -> bool:
     )
 
 
+def _valid_interface_name(value: Any) -> bool:
+    """Valida um nome exato de interface Linux."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+
+    return (
+        len(encoded) <= 15
+        and value not in {".", ".."}
+        and not any(
+            character.isspace()
+            or character in "/:"
+            or ord(character) < 32
+            for character in value
+        )
+        and not value.startswith("!")
+        and not value.endswith("+")
+    )
+
+
 def validate_policy(policy: dict[str, Any]) -> list[str]:
     """Valida a estrutura da política sem executar ações no sistema."""
     if not isinstance(policy, dict):
@@ -99,6 +123,17 @@ def validate_policy(policy: dict[str, Any]) -> list[str]:
             errors.append(
                 f"{prefix}.protocol tem de ser um de {sorted(VALID_PROTOCOLS)}."
             )
+
+        for field in ("input_interface", "output_interface"):
+            if (
+                field in rule
+                and rule[field] is not None
+                and not _valid_interface_name(rule[field])
+            ):
+                errors.append(
+                    f"{prefix}.{field} tem de ser um nome exato de interface "
+                    "Linux válido, sem wildcard ou espaços."
+                )
 
         if "connection_states" in rule:
             states = rule["connection_states"]
