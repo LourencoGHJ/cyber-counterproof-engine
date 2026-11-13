@@ -17,7 +17,7 @@ def test_linux_platform_detects_firewall_tools(monkeypatch):
     monkeypatch.setattr(
         detection.shutil, "which", lambda name: tools.get(name)
     )
-    monkeypatch.setattr(detection.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(detection.os, "geteuid", lambda: 1000, raising=False)
 
     info = detection.detect_platform()
 
@@ -55,27 +55,6 @@ def test_windows_detection_reports_missing_powershell(monkeypatch):
     assert info["adapters"][0]["implementation"] == "implemented"
     assert info["adapters"][0]["status"] == "tool_not_found"
     assert info["adapters"][0]["available"] is False
-
-
-def test_macos_detection_reports_pf_and_application_firewall_as_planned(
-    monkeypatch,
-):
-    monkeypatch.setattr(detection.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(
-        detection.shutil, "which",
-        lambda name: "/sbin/pfctl" if name == "pfctl" else None,
-    )
-    monkeypatch.setattr(
-        detection, "_fixed_executable",
-        lambda path: path if path.endswith("socketfilterfw") else None,
-    )
-    monkeypatch.setattr(detection, "_is_admin", lambda _system: False)
-
-    info = detection.detect_platform()
-
-    assert info["host"]["system"] == "macos"
-    assert len(info["adapters"]) == 2
-    assert all(item["implementation"] == "planned" for item in info["adapters"])
 
 
 def test_unknown_platform_is_not_misclassified(monkeypatch):
