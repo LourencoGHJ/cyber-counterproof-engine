@@ -77,6 +77,7 @@ class FakeCollector:
 def test_live_collector_auto_collects_iptables_and_native_nftables(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr("cce.live_dashboard.platform.system", lambda: "Linux")
     policy_path = tmp_path / "policy.json"
     policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
 
@@ -188,6 +189,7 @@ def test_sudo_readonly_fails_closed_when_sudo_is_unavailable(tmp_path, monkeypat
 def test_live_collector_uses_nftables_json_when_iptables_is_unavailable(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr("cce.live_dashboard.platform.system", lambda: "Linux")
     policy_path = tmp_path / "policy.json"
     policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
     monkeypatch.setattr(
@@ -260,6 +262,7 @@ def test_live_collector_does_not_expose_firewall_selectors(tmp_path, monkeypatch
 
 
 def test_live_collector_reports_missing_tools_as_error(tmp_path, monkeypatch):
+    monkeypatch.setattr("cce.live_dashboard.platform.system", lambda: "Linux")
     policy_path = tmp_path / "policy.json"
     policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
     monkeypatch.setattr("cce.live_dashboard.shutil.which", lambda _name: None)
@@ -825,3 +828,79 @@ def test_public_findings_exposes_safe_selector_labels_only():
             "unmodelled_selectors": ["input_interface", "tcp_flags"],
         }
     ]
+
+
+def test_windows_dashboard_auto_collects_aggregates_without_exposing_rules(
+    tmp_path, monkeypatch
+):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(valid_policy()), encoding="utf-8")
+    monkeypatch.setattr("cce.live_dashboard.platform.system", lambda: "Windows")
+
+    class FakeWindowsAdapter:
+        def __init__(self, timeout_seconds):
+            assert timeout_seconds == 8.0
+
+        def probe(self):
+            return {"available": True, "adapter_id": "windows.defender-firewall"}
+
+        def collect(self):
+            return {
+                "status": "INCONCLUSIVE",
+                "partial": True,
+                "warnings": [],
+                "summary": {
+                    "profiles_total": 3, "profiles_enabled": 3,
+                    "rules_total": 549, "rules_enabled": 295,
+                    "rules_disabled": 254, "inbound_rules": 311,
+                    "outbound_rules": 238, "allow_rules": 548, "block_rules": 1,
+                },
+                "profiles": [{
+                    "name": "Domain", "enabled": "True",
+                    "default_inbound_action": "Block",
+                    "default_outbound_action": "Allow",
+                }],
+                "rules": [{
+                    "id": "sensitive-rule",
+                    "program": ["C:\\Private\\app.exe"],
+                    "remote_addresses": ["10.0.0.5"],
+                }],
+                "evidence": {"windows_active_store": {"sha256": "a" * 64}},
+                "limitations": ["Inventory only."],
+                "collection_duration_ms": 42.0,
+            }
+
+    monkeypatch.setattr(
+        "cce.adapters.windows.defender.WindowsDefenderFirewallAdapter",
+        FakeWindowsAdapter,
+    )
+    result = LiveSnapshotCollector(str(policy_path), source="auto").collect()
+
+    assert result["platform"] == "windows"
+    assert result["source"] == "Windows Defender Firewall ActiveStore"
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["summary"]["windows_rules_total"] == 549
+    assert result["summary"]["windows_rules_enabled"] == 295
+    assert result["summary"]["windows_rules_disabled"] == 254
+    assert result["summary"]["windows_inbound_rules"] == 311
+    assert result["summary"]["windows_outbound_rules"] == 238
+    assert result["summary"]["windows_allow_rules"] == 548
+    assert result["summary"]["windows_block_rules"] == 1
+    assert result["profiles"][0]["enabled"] is True
+    assert "sensitive-rule" not in json.dumps(result)
+    assert "10.0.0.5" not in json.dumps(result)
+    assert "C:\\Private" not in json.dumps(result)
+
+
+def test_live_dashboard_cli_accepts_windows_defender_source():
+    args = make_parser().parse_args([
+        "serve-dashboard", "--policy", "config/policy.json",
+        "--source", "windows-defender",
+    ])
+    assert args.source == "windows-defender"
+
+
+def test_live_dashboard_html_contains_windows_inventory_panel():
+    assert 'id="windows-details"' in LIVE_HTML
+    assert 'id="windows-profiles"' in LIVE_HTML
+    assert "Windows Defender Firewall" in LIVE_HTML
