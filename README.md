@@ -108,13 +108,13 @@ On Linux, the live dashboard collects `iptables-save`, `ip6tables-save`, and `nf
 
 On Windows, `--source auto` selects the Windows Defender Firewall adapter and queries the local `ActiveStore` through PowerShell and the `NetSecurity` module. Run the service on the same Windows host whose firewall is being inspected:
 
-    .\.venv\Scripts\python.exe -m cce.cli serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 10000 --timeout 60
+    .\.venv\Scripts\python.exe -m cce.cli serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 1000 --timeout 30
 
 Open **http://127.0.0.1:8765/** in a browser. The Windows view presents aggregate rule counts (total, enabled, disabled, inbound, outbound, allow and block), profile state and default profile actions. It deliberately does not publish individual rules, application paths, addresses, ports or interface selectors.
 
 The Windows dashboard currently provides a live inventory, not a semantic compliance assessment. Its overall status remains `INCONCLUSIVE` until a Windows policy comparator is implemented. It runs as the current Windows user; access denied or an unavailable `NetSecurity` module is reported without attempting elevation or changing firewall settings.
 
-The live page uses Server-Sent Events (SSE). It sends a new data event when collected evidence or the analysis changes and lightweight heartbeats when the snapshot is unchanged. The interval is a polling target, not a guarantee of end-to-end latency. Windows collection invokes PowerShell and queries associated filters for each rule; start with 5000 ms or more and inspect the measured collection/cycle duration before reducing the interval.
+The live page uses Server-Sent Events (SSE). It sends a new data event when collected evidence or the analysis changes and lightweight heartbeats when the snapshot is unchanged. The Windows dashboard uses a dedicated summary query (profiles and rule counters), not the full five-filter-per-rule evidence collection. Start with a 1000 ms polling target and inspect the measured collection/cycle duration. SSE pushes each completed update immediately; this is not a 1 ms guarantee or native Windows Filtering Platform event subscription.
 
 The HTTP service binds to `127.0.0.1` by default. Keep it local during testing. Do not expose the built-in HTTP server directly to the public Internet.
 
