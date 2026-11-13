@@ -10,6 +10,7 @@ import ipaddress
 import json
 import logging
 import os
+import platform
 import shutil
 import subprocess
 import threading
@@ -107,8 +108,10 @@ class LiveSnapshotCollector:
         timeout_seconds: float = 8.0,
         sudo_readonly: bool = False,
     ) -> None:
-        if source not in {"auto", "iptables", "nftables"}:
-            raise ValueError("source tem de ser auto, iptables ou nftables.")
+        if source not in {"auto", "iptables", "nftables", "windows-defender"}:
+            raise ValueError(
+                "source tem de ser auto, iptables, nftables ou windows-defender."
+            )
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds tem de ser superior a zero.")
 
@@ -233,24 +236,92 @@ class LiveSnapshotCollector:
             "evidence": {"sha256": _sha256(raw)},
         }
 
+    def _collect_windows_defender(self) -> dict[str, Any]:
+        """Recolhe inventário agregado do Windows Defender sem expor regras."""
+        from cce.adapters.windows.defender import (
+            WindowsDefenderFirewallAdapter,
+        )
+
+        adapter = WindowsDefenderFirewallAdapter(
+            timeout_seconds=self.timeout_seconds,
+        )
+        if not adapter.probe().get("available"):
+            raise RuntimeError(
+                "O adaptador Windows Defender Firewall não está disponível "
+                "neste host."
+            )
+        result = adapter.collect()
+        if not isinstance(result, dict):
+            raise RuntimeError("O adaptador Windows não devolveu um objeto.")
+
+        source_summary = result.get("summary", {})
+        if not isinstance(source_summary, dict):
+            source_summary = {}
+
+        profiles: list[dict[str, Any]] = []
+        for item in result.get("profiles", []):
+            if not isinstance(item, dict):
+                continue
+            profiles.append(
+                {
+                    "name": str(item.get("name", "")),
+                    "enabled": str(item.get("enabled", "")).strip().lower() == "true",
+                    "default_inbound_action": str(item.get("default_inbound_action", "")),
+                    "default_outbound_action": str(item.get("default_outbound_action", "")),
+                }
+            )
+
+        summary = {
+            "profiles_total": int(source_summary.get("profiles_total", 0) or 0),
+            "profiles_enabled": int(source_summary.get("profiles_enabled", 0) or 0),
+            "rules_total": int(source_summary.get("rules_total", 0) or 0),
+            "rules_enabled": int(source_summary.get("rules_enabled", 0) or 0),
+            "rules_disabled": int(source_summary.get("rules_disabled", 0) or 0),
+            "inbound_rules": int(source_summary.get("inbound_rules", 0) or 0),
+            "outbound_rules": int(source_summary.get("outbound_rules", 0) or 0),
+            "allow_rules": int(source_summary.get("allow_rules", 0) or 0),
+            "block_rules": int(source_summary.get("block_rules", 0) or 0),
+        }
+
+        return {
+            "platform": "windows",
+            "status": result.get("status", "INCONCLUSIVE"),
+            "scope": "windows_defender_active_store_inventory",
+            "partial": bool(result.get("partial", True)),
+            "warnings": list(result.get("warnings", [])),
+            "summary": summary,
+            "profiles": profiles,
+            "findings": [],
+            "limitations": list(result.get("limitations", [])) + [
+                "O dashboard Windows apresenta inventário agregado; não publica "
+                "regras individuais nem executa comparação semântica da policy."
+            ],
+            "evidence": result.get("evidence", {}),
+            "collection_duration_ms": result.get("collection_duration_ms"),
+        }
+
     def collect(self) -> dict[str, Any]:
         """Recolhe as fontes selecionadas e combina resultados sem somar fontes."""
         started = time.monotonic()
-        selected = (
-            ("iptables", "nftables")
-            if self.requested_source == "auto"
-            else (self.requested_source,)
-        )
+        if self.requested_source == "auto":
+            selected = (
+                ("windows-defender",)
+                if platform.system().lower() == "windows"
+                else ("iptables", "nftables")
+            )
+        else:
+            selected = (self.requested_source,)
         results: dict[str, dict[str, Any]] = {}
         warnings: list[str] = []
 
         for source in selected:
             try:
-                results[source] = (
-                    self._collect_iptables()
-                    if source == "iptables"
-                    else self._collect_nftables()
-                )
+                if source == "iptables":
+                    results[source] = self._collect_iptables()
+                elif source == "nftables":
+                    results[source] = self._collect_nftables()
+                else:
+                    results[source] = self._collect_windows_defender()
             except Exception as exc:  # Mantém o serviço ativo após falhas de recolha.
                 warnings.append(f"{source}: {type(exc).__name__}: {exc}")
 
@@ -305,11 +376,22 @@ class LiveSnapshotCollector:
         return {
             "updated_at_utc": _utc_now(),
             "status": status,
+            "platform": (
+                "windows" if "windows-defender" in results else "linux"
+            ),
             "source": " + ".join(
-                "iptables-save" if source == "iptables" else "nftables"
+                {
+                    "iptables": "iptables-save",
+                    "nftables": "nftables",
+                    "windows-defender": "Windows Defender Firewall ActiveStore",
+                }[source]
                 for source in results
             ),
-            "scope": "combined_read_only_firewall_analysis",
+            "scope": (
+                "windows_defender_active_store_inventory"
+                if "windows-defender" in results
+                else "combined_read_only_firewall_analysis"
+            ),
             "partial": bool(warnings),
             "warnings": warnings,
             "summary": {
@@ -323,15 +405,36 @@ class LiveSnapshotCollector:
                 "nftables_base_policy_mismatches": nft_summary.get(
                     "base_policy_mismatches", 0
                 ),
+                "windows_profiles_total": results.get("windows-defender", {}).get("summary", {}).get("profiles_total", 0),
+                "windows_profiles_enabled": results.get("windows-defender", {}).get("summary", {}).get("profiles_enabled", 0),
+                "windows_rules_total": results.get("windows-defender", {}).get("summary", {}).get("rules_total", 0),
+                "windows_rules_enabled": results.get("windows-defender", {}).get("summary", {}).get("rules_enabled", 0),
+                "windows_rules_disabled": results.get("windows-defender", {}).get("summary", {}).get("rules_disabled", 0),
+                "windows_inbound_rules": results.get("windows-defender", {}).get("summary", {}).get("inbound_rules", 0),
+                "windows_outbound_rules": results.get("windows-defender", {}).get("summary", {}).get("outbound_rules", 0),
+                "windows_allow_rules": results.get("windows-defender", {}).get("summary", {}).get("allow_rules", 0),
+                "windows_block_rules": results.get("windows-defender", {}).get("summary", {}).get("block_rules", 0),
                 "findings_total": len(findings),
             },
+            "profiles": results.get("windows-defender", {}).get("profiles", []),
             "findings": findings[:200],
-            "limitations": list(dict.fromkeys(limitations + [
-                "As contagens de iptables-save e nftables são apresentadas separadamente; "
-                "as fontes podem representar regras de compatibilidade sobrepostas.",
-                "A análise nftables continua limitada às políticas das base chains e à estrutura suportada.",
-                "As atualizações são periódicas; não constituem uma garantia de latência de milissegundos."
-            ])),
+            "limitations": list(dict.fromkeys(
+                limitations + (
+                    [
+                        "O dashboard Windows apresenta apenas inventário agregado "
+                        "do ActiveStore; não compara semanticamente as regras com a policy.",
+                        "As atualizações são periódicas e dependem do tempo de recolha "
+                        "do PowerShell; não são eventos nativos do Windows Filtering Platform."
+                    ]
+                    if "windows-defender" in results
+                    else [
+                        "As contagens de iptables-save e nftables são apresentadas separadamente; "
+                        "as fontes podem representar regras de compatibilidade sobrepostas.",
+                        "A análise nftables continua limitada às políticas das base chains e à estrutura suportada.",
+                        "As atualizações são periódicas; não constituem uma garantia de latência de milissegundos."
+                    ]
+                )
+            )),
             "evidence": evidence,
             "source_results": {
                 source: {
@@ -381,7 +484,9 @@ class LiveState:
             "last_collection_duration_ms": None,
             "last_cycle_duration_ms": None,
             "status": "STARTING",
+            "platform": None,
             "source": collector.requested_source,
+            "profiles": [],
             "scope": "not_collected",
             "partial": True,
             "warnings": [],
@@ -584,13 +689,27 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
   <h2>Resumo da recolha</h2>
   <div class="metrics">
     <div class="metric"><span class="label">Fonte</span><strong id="source" class="value">—</strong></div>
-    <div class="metric"><span class="label">Regras iptables</span><strong id="rules" class="value">—</strong></div>
-    <div class="metric"><span class="label">Regras nftables</span><strong id="nft-rules" class="value">—</strong></div>
-    <div class="metric"><span class="label">Base chains nftables</span><strong id="nft-chains" class="value">—</strong></div>
+    <div class="metric"><span id="rules-label" class="label">Regras iptables</span><strong id="rules" class="value">—</strong></div>
+    <div class="metric"><span id="nft-rules-label" class="label">Regras nftables</span><strong id="nft-rules" class="value">—</strong></div>
+    <div class="metric"><span id="nft-chains-label" class="label">Base chains nftables</span><strong id="nft-chains" class="value">—</strong></div>
     <div class="metric"><span class="label">Descobertas</span><strong id="findings-count" class="value">—</strong></div>
     <div class="metric"><span class="label">Recolha (ms)</span><strong id="duration" class="value">—</strong></div>
   </div>
   <p id="coverage" class="muted"></p>
+</section>
+<section id="windows-details" hidden>
+  <h2>Windows Defender Firewall</h2>
+  <div class="metrics">
+    <div class="metric"><span class="label">Perfis ativos</span><strong id="windows-profiles-enabled" class="value">—</strong></div>
+    <div class="metric"><span class="label">Regras inbound</span><strong id="windows-inbound" class="value">—</strong></div>
+    <div class="metric"><span class="label">Regras outbound</span><strong id="windows-outbound" class="value">—</strong></div>
+    <div class="metric"><span class="label">Ações Allow</span><strong id="windows-allow" class="value">—</strong></div>
+    <div class="metric"><span class="label">Ações Block</span><strong id="windows-block" class="value">—</strong></div>
+  </div>
+  <div class="panel table-wrap" style="margin-top:12px">
+    <table><thead><tr><th>Perfil</th><th>Estado</th><th>Ação inbound predefinida</th><th>Ação outbound predefinida</th></tr></thead>
+    <tbody id="windows-profiles"><tr><td colspan="4" class="muted">A aguardar dados.</td></tr></tbody></table>
+  </div>
 </section>
 <section>
   <h2>Descobertas atuais</h2>
@@ -610,7 +729,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
   <h2>Limitações da fonte</h2>
   <div id="limitations" class="panel"><p class="empty">A aguardar dados.</p></div>
 </section>
-<footer>Os dados são recolhidos pelo serviço CCE no host Linux. A recolha é apenas de leitura; nenhuma regra é aplicada ou alterada. O intervalo representa a frequência de consulta, não uma garantia de latência de milissegundos.</footer>
+<footer id="footer-note">Os dados são recolhidos pelo serviço CCE no host Linux. A recolha é apenas de leitura; nenhuma regra é aplicada ou alterada. O intervalo representa a frequência de consulta, não uma garantia de latência de milissegundos.</footer>
 </main>
 <script>
 (() => {
@@ -668,6 +787,27 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     }
   }
 
+  function updateWindowsProfiles(profiles) {
+    const body = byId("windows-profiles");
+    body.replaceChildren();
+    if (!Array.isArray(profiles) || profiles.length === 0) {
+      const row = document.createElement("tr");
+      cell(row, "Sem dados de perfis.");
+      row.firstElementChild.colSpan = 4;
+      row.firstElementChild.className = "muted";
+      body.appendChild(row);
+      return;
+    }
+    for (const profile of profiles) {
+      const row = document.createElement("tr");
+      cell(row, profile.name);
+      cell(row, profile.enabled ? "Ativo" : "Inativo");
+      cell(row, profile.default_inbound_action);
+      cell(row, profile.default_outbound_action);
+      body.appendChild(row);
+    }
+  }
+
   function updateHistory(snapshot) {
     history.unshift({
       time: snapshot.updated_at_utc,
@@ -701,9 +841,29 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid #d9dee5;color:#7580
     setText("updated", checkedAt ? "Última recolha " + checkedAt : "Ainda sem recolha");
     setText("source", snapshot.source);
     const summary = snapshot.summary || {};
-    setText("rules", summary.iptables_rules_total ?? 0);
-    setText("nft-rules", summary.nftables_rules_total ?? 0);
-    setText("nft-chains", summary.nftables_base_chains ?? 0);
+    const isWindows = snapshot.platform === "windows";
+    byId("rules-label").textContent = isWindows ? "Regras Windows" : "Regras iptables";
+    byId("nft-rules-label").textContent = isWindows ? "Ativas" : "Regras nftables";
+    byId("nft-chains-label").textContent = isWindows ? "Desativadas" : "Base chains nftables";
+    if (isWindows) {
+      setText("rules", summary.windows_rules_total ?? 0);
+      setText("nft-rules", summary.windows_rules_enabled ?? 0);
+      setText("nft-chains", summary.windows_rules_disabled ?? 0);
+      setText("windows-profiles-enabled", summary.windows_profiles_enabled ?? 0);
+      setText("windows-inbound", summary.windows_inbound_rules ?? 0);
+      setText("windows-outbound", summary.windows_outbound_rules ?? 0);
+      setText("windows-allow", summary.windows_allow_rules ?? 0);
+      setText("windows-block", summary.windows_block_rules ?? 0);
+      byId("windows-details").hidden = false;
+      updateWindowsProfiles(snapshot.profiles || []);
+      setText("footer-note", "Dados recolhidos pelo CCE neste host Windows através do ActiveStore. Inventário agregado read-only; nenhuma regra é aplicada ou alterada. Atualização periódica por consulta PowerShell, não por eventos nativos do Windows.");
+    } else {
+      setText("rules", summary.iptables_rules_total ?? 0);
+      setText("nft-rules", summary.nftables_rules_total ?? 0);
+      setText("nft-chains", summary.nftables_base_chains ?? 0);
+      byId("windows-details").hidden = true;
+      setText("footer-note", "Os dados são recolhidos pelo serviço CCE no host Linux. A recolha é apenas de leitura; nenhuma regra é aplicada ou alterada. O intervalo representa a frequência de consulta, não uma garantia de latência de milissegundos.");
+    }
     setText("findings-count", Array.isArray(snapshot.findings) ? snapshot.findings.length : 0);
     setText("duration", snapshot.last_collection_duration_ms ?? snapshot.collection_duration_ms);
     setText("coverage", snapshot.scope ? "Âmbito: " + snapshot.scope + " · Intervalo: " + (snapshot.interval_ms ?? Math.round((snapshot.interval_seconds || 0) * 1000)) + " ms · Ciclo: " + (snapshot.last_cycle_duration_ms ?? "—") + " ms" : "");
