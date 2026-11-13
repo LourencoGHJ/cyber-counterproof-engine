@@ -372,6 +372,7 @@ class LiveSnapshotCollector:
         status = "DRIFT" if "DRIFT" in statuses else "INCONCLUSIVE"
         iptables_summary = results.get("iptables", {}).get("summary", {})
         nft_summary = results.get("nftables", {}).get("summary", {})
+        windows_summary = results.get("windows-defender", {}).get("summary", {})
 
         return {
             "updated_at_utc": _utc_now(),
@@ -405,15 +406,15 @@ class LiveSnapshotCollector:
                 "nftables_base_policy_mismatches": nft_summary.get(
                     "base_policy_mismatches", 0
                 ),
-                "windows_profiles_total": results.get("windows-defender", {}).get("summary", {}).get("profiles_total", 0),
-                "windows_profiles_enabled": results.get("windows-defender", {}).get("summary", {}).get("profiles_enabled", 0),
-                "windows_rules_total": results.get("windows-defender", {}).get("summary", {}).get("rules_total", 0),
-                "windows_rules_enabled": results.get("windows-defender", {}).get("summary", {}).get("rules_enabled", 0),
-                "windows_rules_disabled": results.get("windows-defender", {}).get("summary", {}).get("rules_disabled", 0),
-                "windows_inbound_rules": results.get("windows-defender", {}).get("summary", {}).get("inbound_rules", 0),
-                "windows_outbound_rules": results.get("windows-defender", {}).get("summary", {}).get("outbound_rules", 0),
-                "windows_allow_rules": results.get("windows-defender", {}).get("summary", {}).get("allow_rules", 0),
-                "windows_block_rules": results.get("windows-defender", {}).get("summary", {}).get("block_rules", 0),
+                "windows_profiles_total": windows_summary.get("profiles_total", 0),
+                "windows_profiles_enabled": windows_summary.get("profiles_enabled", 0),
+                "windows_rules_total": windows_summary.get("rules_total", 0),
+                "windows_rules_enabled": windows_summary.get("rules_enabled", 0),
+                "windows_rules_disabled": windows_summary.get("rules_disabled", 0),
+                "windows_inbound_rules": windows_summary.get("inbound_rules", 0),
+                "windows_outbound_rules": windows_summary.get("outbound_rules", 0),
+                "windows_allow_rules": windows_summary.get("allow_rules", 0),
+                "windows_block_rules": windows_summary.get("block_rules", 0),
                 "findings_total": len(findings),
             },
             "profiles": results.get("windows-defender", {}).get("profiles", []),
