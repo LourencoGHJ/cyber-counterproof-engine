@@ -311,8 +311,13 @@ def test_user_chain_transfer_prevents_proving_rule_absence():
     )
     report = compare(baseline_rule(), text)
 
-    assert report["comparisons"][0]["status"] == "INCONCLUSIVE"
-    assert "não segue esse fluxo" in report["comparisons"][0]["reason"]
+    item = report["comparisons"][0]
+    assert item["status"] == "BROADER_SCOPE"
+    assert item["observed_action"] == "ACCEPT"
+    assert [step["chain"] for step in item["flow_path"]] == [
+        "INPUT",
+        "APP-SERVICES",
+    ]
 
 
 
@@ -342,3 +347,317 @@ def test_return_target_does_not_masquerade_as_user_chain_transfer():
     )
 
     assert report["comparisons"][0]["status"] == "MISSING"
+
+
+
+def test_comparator_follows_nested_jump_and_goto_with_exact_scope():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP - [0:0]\n"
+        ":LEAF - [0:0]\n"
+        "-A INPUT -j APP\n"
+        "-A APP -g LEAF\n"
+        "-A LEAF -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "MATCHED"
+    assert [step["operation"] for step in item["flow_path"]] == [
+        "jump",
+        "goto",
+        "jump",
+    ]
+    assert [step["chain"] for step in item["flow_path"]] == [
+        "INPUT",
+        "APP",
+        "LEAF",
+    ]
+
+
+def test_comparator_resumes_caller_after_user_chain_return():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP - [0:0]\n"
+        "-A INPUT -j APP\n"
+        "-A APP -j RETURN\n"
+        "-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "MATCHED"
+    assert [step["target"] for step in item["flow_path"]] == [
+        "APP",
+        "RETURN",
+        "ACCEPT",
+    ]
+
+
+def test_goto_return_skips_remainder_of_user_chain():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":OUTER - [0:0]\n"
+        ":INNER - [0:0]\n"
+        "-A INPUT -j OUTER\n"
+        "-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\n"
+        "-A OUTER -g INNER\n"
+        "-A OUTER -s 192.0.2.0/24 -p tcp --dport 443 -j DROP\n"
+        "-A INNER -j RETURN\n"
+        "COMMIT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "MATCHED"
+    assert not any(
+        step["chain"] == "OUTER" and step["target"] == "DROP"
+        for step in item["flow_path"]
+    )
+    assert item["flow_path"][-1]["target"] == "ACCEPT"
+
+
+def test_partial_user_chain_transfer_remains_inconclusive():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP - [0:0]\n"
+        "-A INPUT -s 192.0.2.0/25 -j APP\n"
+        "-A APP -p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "INCONCLUSIVE"
+    assert "parte do âmbito" in item["reason"]
+
+
+def test_recursive_user_chain_remains_inconclusive():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP - [0:0]\n"
+        "-A INPUT -j APP\n"
+        "-A APP -j APP\n"
+        "COMMIT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "INCONCLUSIVE"
+    assert "recursão" in item["reason"]
+
+
+def test_unmodelled_interface_in_user_chain_remains_inconclusive():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP - [0:0]\n"
+        "-A INPUT -j APP\n"
+        "-A APP -i eth+ -p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "INCONCLUSIVE"
+    assert item["unmodelled_selectors"] == ["input_interface_pattern"]
+
+def test_comparator_resolves_lowercase_user_chain_names():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":app-services - [0:0]\n"
+        "-A INPUT -j app-services\n"
+        "-A app-services -s 192.0.2.0/24 "
+        "-p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "MATCHED"
+    assert item["observed_action"] == "ACCEPT"
+    assert [step["chain"] for step in item["flow_path"]] == [
+        "INPUT",
+        "app-services",
+    ]
+    assert item["flow_path"][0]["target"] == "app-services"
+
+def test_policy_accepts_exact_interface_selectors():
+    valid = {
+        "policy_id": "interface-test",
+        "input_policy": "drop",
+        "output_policy": "accept",
+        "rules": [
+            baseline_rule(input_interface="lo", output_interface="wan0")
+        ],
+    }
+
+    assert validate_policy(valid) == []
+
+
+def test_policy_rejects_wildcard_or_invalid_interface_names():
+    for field, value in (
+        ("input_interface", "eth+"),
+        ("output_interface", "invalid interface"),
+        ("input_interface", "x" * 16),
+        ("output_interface", ""),
+    ):
+        invalid = {
+            "policy_id": "interface-test",
+            "input_policy": "drop",
+            "output_policy": "accept",
+            "rules": [baseline_rule(**{field: value})],
+        }
+
+        errors = validate_policy(invalid)
+        assert any(field in error for error in errors)
+
+
+def test_exact_input_interface_is_matched():
+    text = snapshot(
+        "-A INPUT -i lo -s 192.0.2.0/24 "
+        "-p tcp --dport 443 -j ACCEPT\n"
+    )
+
+    item = compare(
+        baseline_rule(input_interface="lo"),
+        text,
+    )["comparisons"][0]
+
+    assert item["status"] == "MATCHED"
+
+
+def test_observed_input_interface_narrows_unrestricted_policy():
+    text = snapshot(
+        "-A INPUT -i lo -s 192.0.2.0/24 "
+        "-p tcp --dport 443 -j ACCEPT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "NARROWER_SCOPE"
+
+
+def test_missing_observed_interface_is_broader_than_policy():
+    text = snapshot(
+        "-A INPUT -s 192.0.2.0/24 "
+        "-p tcp --dport 443 -j ACCEPT\n"
+    )
+
+    item = compare(
+        baseline_rule(input_interface="lo"),
+        text,
+    )["comparisons"][0]
+
+    assert item["status"] == "BROADER_SCOPE"
+
+
+def test_different_input_interface_does_not_match():
+    text = snapshot(
+        "-A INPUT -i eth0 -s 192.0.2.0/24 "
+        "-p tcp --dport 443 -j ACCEPT\n"
+    )
+
+    item = compare(
+        baseline_rule(input_interface="lo"),
+        text,
+    )["comparisons"][0]
+
+    assert item["status"] == "MISSING"
+
+
+def test_exact_output_interface_is_matched():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        "-A OUTPUT -o wan0 -p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(
+        baseline_rule(
+            chain="output",
+            source="any",
+            output_interface="wan0",
+        ),
+        text,
+    )["comparisons"][0]
+
+    assert item["status"] == "MATCHED"
+
+
+def test_exact_input_interface_is_combined_across_user_chain():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP - [0:0]\n"
+        "-A INPUT -i lo -j APP\n"
+        "-A APP -s 192.0.2.0/24 -p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(
+        baseline_rule(input_interface="lo"),
+        text,
+    )["comparisons"][0]
+
+    assert item["status"] == "MATCHED"
+
+
+def test_conflicting_interfaces_across_user_chain_remain_inconclusive():
+    text = (
+        "*filter\n"
+        ":INPUT DROP [0:0]\n"
+        ":OUTPUT ACCEPT [0:0]\n"
+        ":FORWARD DROP [0:0]\n"
+        ":APP - [0:0]\n"
+        "-A INPUT -i lo -j APP\n"
+        "-A APP -i eth0 -s 192.0.2.0/24 "
+        "-p tcp --dport 443 -j ACCEPT\n"
+        "COMMIT\n"
+    )
+
+    item = compare(
+        baseline_rule(input_interface="lo"),
+        text,
+    )["comparisons"][0]
+
+    assert item["status"] == "INCONCLUSIVE"
+
+
+def test_wildcard_input_interface_remains_inconclusive():
+    text = snapshot(
+        "-A INPUT -i eth+ -s 192.0.2.0/24 "
+        "-p tcp --dport 443 -j ACCEPT\n"
+    )
+
+    item = compare(baseline_rule(), text)["comparisons"][0]
+
+    assert item["status"] == "INCONCLUSIVE"
+    assert "input_interface_pattern" in item["unmodelled_selectors"]

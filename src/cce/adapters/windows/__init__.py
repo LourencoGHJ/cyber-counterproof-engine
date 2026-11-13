@@ -1,0 +1,1 @@
+"""Adaptador Windows Defender Firewall."""

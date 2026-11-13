@@ -17,7 +17,7 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Monitoring:** records periodic checks and drift findings in JSON history.
 - **Reproducible evidence:** generates JSON reports and SHA-256 hashes for input files.
 - **nftables integration:** validates rules files with nft --check and can inspect the active ruleset in read-only mode.
-- **Local dashboard:** presents an HTML summary of monitoring history.
+- **Live firewall dashboard:** serves current read-only iptables/ip6tables/nftables analysis over HTTP and pushes updates to browsers with Server-Sent Events; static history reports remain available separately.
 - **Packet evaluation:** simulates a packet against a supported iptables filter-chain subset, including TCP flag masks, and explains the rule-by-rule result.
 - **Scenario runner:** checks expected ACCEPT, DROP, REJECT, and INCONCLUSIVE outcomes, including SYN-only matching, from synthetic fixtures.
 - **Rule conflict analysis:** detects exact duplicates, redundant rules, proven shadowing, potential verdict overlaps, and TCP rules whose flag conditions can never match.
@@ -70,9 +70,43 @@ Inspect the active ruleset in read-only mode:
 
     cce inspect-live --output reports/live-summary.json
 
-Generate a local dashboard from monitoring history:
+Generate the local security operations dashboard from monitoring history:
 
     cce dashboard --history reports/monitor-history.json --output reports/dashboard.html
+
+The dashboard is a simple, responsive HTML report with the latest assessment, counts for PASS/DRIFT/INCONCLUSIVE/ERROR, findings from the latest run, and a searchable, filterable, sortable table of recent executions. Execution details can be expanded, and the report can be printed. It uses only data present in the JSON history, has no external assets, and does not present itself as a live firewall or host-monitoring console.
+
+Start the live firewall dashboard on the Linux host whose firewall is being inspected:
+
+    cce serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 1000
+
+Open **http://127.0.0.1:8765/** in a browser. With `--source auto`, the collector reads `iptables-save`, `ip6tables-save`, and `nft -j list ruleset using fixed read-only subprocess arguments. Completed analyses are pushed to connected browsers with Server-Sent Events (SSE); the page does not need to reload.
+
+The dashboard presents the latest status, separate iptables/nftables counts, findings, collection duration, source availability, and analysis limitations. The iptables adapter uses the CCE semantic snapshot analysis. The nftables adapter currently compares base-chain policies and structural inventory; it does not claim full nftables rule-semantic coverage. Results from the two sources are kept separate because an iptables-nft compatibility ruleset may overlap with native nftables rules.
+
+The default polling target is 1000 ms; the minimum configurable interval is 100 ms. Shorter intervals increase subprocess and CPU load. Each cycle reports collection duration and total cycle duration. The collector publishes a new SSE data event only when the firewall evidence or analysis result changes; unchanged cycles update the last-checked timestamp through lightweight SSE heartbeats. This is measured polling, not a guarantee of 1 ms end-to-end latency: actual freshness includes command execution, parsing, analysis and browser delivery. The collector is read-only and runs GET-only HTTP endpoints; it does not apply or modify firewall rules. The API does not publish raw rule text or IP/port selectors.
+
+The service must run on the Linux machine whose firewall is being inspected. Running the dashboard on Windows does not inspect a separate Linux firewall. A Windows browser can view a Linux-hosted instance through a protected private network or HTTPS reverse proxy.
+
+The web service should run as an unprivileged user. If firewall listing requires elevated permissions, configure a narrowly scoped sudoers rule and start CCE with `--sudo-readonly`. This uses non-interactive `sudo -n` only for the fixed listing commands; the web process itself does not run as root. Adapt the binary paths to the host (check them with `command -v iptables-save ip6tables-save nft`) and validate the file with `visudo`:
+
+    sudo visudo -f /etc/sudoers.d/cce-firewall-read
+    cce-dashboard ALL=(root) NOPASSWD: /usr/sbin/iptables-save "", /usr/sbin/ip6tables-save "", /usr/sbin/nft -j list ruleset
+
+The empty argument string on the two iptables commands restricts them to no arguments; the nft command is restricted to the exact JSON list-ruleset invocation. Add only the commands actually installed on the host. Then run:
+
+    cce serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 1000 --sudo-readonly
+
+If the exact sudoers permission is absent or `sudo` cannot run non-interactively, the collector reports an error and does not prompt for a password.
+
+**Remote access:** keep the service bound to `127.0.0.1` and expose it through a TLS reverse proxy or private VPN where possible. Direct non-loopback binding requires an explicit acknowledgement, a token of at least 32 characters, and a trusted VPN/HTTPS transport. Set the token in the environment; do not pass it as a command-line argument:
+
+    export CCE_DASHBOARD_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    cce serve-dashboard --policy config/policy.json --host 0.0.0.0 --port 8765 --source auto --interval-ms 1000 --allow-remote --trusted-transport --sudo-readonly
+
+Remote access uses HTTP Basic authentication (username `cce`, password from `CCE_DASHBOARD_TOKEN`). The built-in server does not provide TLS; never expose its plain HTTP port directly to the public Internet. Restrict access at the VPN or reverse proxy and keep the token secret.
+
+The static `cce dashboard` command remains intended for an exported historical HTML report; use `cce serve-dashboard` for live collection.
 
 Evaluate a synthetic packet against an offline iptables-save snapshot (read-only):
 

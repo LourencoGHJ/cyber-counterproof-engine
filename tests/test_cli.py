@@ -1,6 +1,6 @@
 import json
 
-from cce.cli import main
+from cce.cli import main, make_parser
 
 
 def write_json(path, data):
@@ -194,3 +194,81 @@ def test_compare_iptables_save_reports_missing_policy_rules_as_drift(
     assert report["result"]["summary"]["base_policies_matched"] == 4
     assert report["result"]["summary"]["rules_semantically_compared"] == 2
     assert report["result"]["summary"]["semantic_rule_drifts"] == 2
+
+
+
+def test_serve_dashboard_cli_exposes_live_read_only_options():
+    args = make_parser().parse_args(
+        [
+            "serve-dashboard",
+            "--policy", "config/policy.json",
+            "--source", "auto",
+            "--host", "127.0.0.1",
+            "--port", "9000",
+            "--interval-ms", "1500",
+            "--timeout", "4",
+            "--sudo-readonly",
+        ]
+    )
+
+    assert args.command == "serve-dashboard"
+    assert args.policy == "config/policy.json"
+    assert args.source == "auto"
+    assert args.host == "127.0.0.1"
+    assert args.port == 9000
+    assert args.interval_ms == 1500
+    assert args.timeout == 4
+    assert args.sudo_readonly is True
+
+
+def test_serve_dashboard_cli_loads_policy_and_starts_server(
+    tmp_path, monkeypatch
+):
+    policy_file = tmp_path / "policy.json"
+    write_json(policy_file, valid_policy())
+    captured = {}
+
+    def fake_serve(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("cce.cli.serve_live_dashboard", fake_serve)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cce",
+            "serve-dashboard",
+            "--policy", str(policy_file),
+            "--host", "127.0.0.1",
+            "--port", "9010",
+            "--interval-ms", "1000",
+            "--timeout", "4",
+            "--sudo-readonly",
+        ],
+    )
+
+    assert main() == 0
+    assert captured["policy_path"] == str(policy_file)
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 9010
+    assert captured["interval_seconds"] == 1.0
+    assert captured["timeout_seconds"] == 4
+    assert captured["sudo_readonly"] is True
+
+
+def test_serve_dashboard_cli_rejects_invalid_policy(tmp_path, monkeypatch, capsys):
+    policy_file = tmp_path / "policy.json"
+    invalid = valid_policy()
+    invalid["input_policy"] = "invalid"
+    write_json(policy_file, invalid)
+
+    def should_not_start(**_kwargs):
+        raise AssertionError("The service must not start with an invalid policy.")
+
+    monkeypatch.setattr("cce.cli.serve_live_dashboard", should_not_start)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cce", "serve-dashboard", "--policy", str(policy_file)],
+    )
+
+    assert main() == 2
+    assert "input_policy" in capsys.readouterr().err

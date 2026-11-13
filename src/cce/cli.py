@@ -9,6 +9,7 @@ from cce.dashboard import generate_dashboard
 from cce.drift import compare_policies
 from cce.engine import analyze
 from cce.live import analyze_live_ruleset
+from cce.live_dashboard import serve_live_dashboard
 from cce.iptables_save import analyze_iptables_saves
 from cce.iptables_risk import find_ssh_rule_candidates
 from cce.models import (
@@ -32,6 +33,8 @@ from cce.packet_cli import (
 )
 from cce.policy_conflicts import analyze_iptables_rule_conflicts
 from cce.iptables_chain_flow import analyze_iptables_chain_flow
+from cce.adapters.registry import create_firewall_adapter
+from cce.platform.detection import detect_platform, format_doctor, format_platform_info
 
 
 def make_parser():
@@ -128,6 +131,53 @@ def make_parser():
         help="Caminho do dashboard HTML gerado.",
     )
 
+    live_dashboard = subs.add_parser(
+        "serve-dashboard",
+        help="Servir o estado atual da firewall com atualização SSE read-only.",
+    )
+    live_dashboard.add_argument("--policy", required=True)
+    live_dashboard.add_argument(
+        "--source",
+        choices=("auto", "iptables", "nftables"),
+        default="auto",
+        help="auto recolhe iptables-save, ip6tables-save e nftables.",
+    )
+    live_dashboard.add_argument(
+        "--interval-ms",
+        type=int,
+        default=1000,
+        help="Intervalo de recolha em milissegundos (100–60000; por omissão: 1000).",
+    )
+    live_dashboard.add_argument(
+        "--timeout",
+        type=float,
+        default=8,
+        help="Timeout máximo de cada comando de recolha, em segundos.",
+    )
+    live_dashboard.add_argument("--host", default="127.0.0.1")
+    live_dashboard.add_argument("--port", type=int, default=8765)
+    live_dashboard.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Permite bind não-local; exige token e transporte privado/HTTPS.",
+    )
+    live_dashboard.add_argument(
+        "--token-env",
+        default="CCE_DASHBOARD_TOKEN",
+        help="Variável de ambiente com token remoto (mínimo: 32 caracteres).",
+    )
+    live_dashboard.add_argument(
+        "--trusted-transport",
+        action="store_true",
+        help="Confirma que o acesso remoto está atrás de VPN ou proxy HTTPS.",
+    )
+
+    live_dashboard.add_argument(
+        "--sudo-readonly",
+        action="store_true",
+        help="Usa sudo -n apenas para os comandos fixos de listagem da firewall.",
+    )
+
     add_packet_evaluation_parser(subs)
 
     snapshot_analysis = subs.add_parser(
@@ -172,6 +222,48 @@ def make_parser():
     )
     conflicts.add_argument("--output", required=True)
 
+    subs.add_parser(
+        "doctor",
+        help="Diagnosticar o sistema operativo e as capacidades do host.",
+    )
+
+    platform_info = subs.add_parser(
+        "platform-info",
+        help="Consultar informação estruturada da plataforma.",
+    )
+    platform_info.add_argument(
+        "--json",
+        action="store_true",
+        help="Apresentar o diagnóstico em JSON.",
+    )
+    platform_info.add_argument(
+        "--output",
+        help="Guardar o diagnóstico em JSON num ficheiro.",
+    )
+
+    collect = subs.add_parser(
+        "collect",
+        help="Executar uma recolha de firewall através do adaptador da plataforma.",
+    )
+    collect.add_argument("--policy", required=True)
+    collect.add_argument(
+        "--once",
+        action="store_true",
+        required=True,
+        help="Executar uma única recolha e terminar.",
+    )
+    collect.add_argument(
+        "--source",
+        choices=("auto", "iptables", "nftables"),
+        default="auto",
+    )
+    collect.add_argument("--timeout", type=float, default=8)
+    collect.add_argument("--sudo-readonly", action="store_true")
+    collect.add_argument(
+        "--output",
+        default="reports/live-collection.json",
+    )
+
     return parser
 
 
@@ -179,6 +271,67 @@ def main():
     args = make_parser().parse_args()
 
     try:
+        if args.command == "doctor":
+            info = detect_platform()
+            print(format_doctor(info))
+            return 0
+
+        if args.command == "platform-info":
+            info = detect_platform()
+            if args.output or args.json:
+                import json
+
+                payload = json.dumps(info, ensure_ascii=False, indent=2)
+                if args.output:
+                    output = Path(args.output)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_text(payload + "\\n", encoding="utf-8")
+                    print(f"Platform report: {output}")
+                else:
+                    print(payload)
+            else:
+                print(format_platform_info(info))
+            return 0
+
+        if args.command == "collect":
+            adapter = create_firewall_adapter(
+                policy_path=args.policy,
+                source=args.source,
+                timeout_seconds=args.timeout,
+                sudo_readonly=args.sudo_readonly,
+            )
+
+            probe = adapter.probe()
+            print(f"Adaptador: {probe['adapter_id']}")
+            print(f"Plataforma: {probe['platform']}")
+            print(f"Disponível: {'sim' if probe['available'] else 'não'}")
+
+            if not probe["available"]:
+                print(
+                    "ERRO: Nenhuma ferramenta compatível foi encontrada.",
+                    file=sys.stderr,
+                )
+                return 2
+
+            result = adapter.collect()
+            write_json_report(result, args.output)
+
+            print(f"CCE: {result.get('status', 'UNKNOWN')}")
+            print(f"Fonte: {result.get('source', 'N/D')}")
+            print(f"Recolha parcial: {result.get('partial', False)}")
+            print(f"Resumo: {result.get('summary', {})}")
+            print(f"Avisos: {result.get('warnings', [])}")
+            print(f"Relatório: {args.output}")
+
+            status = result.get("status")
+            if status == "ERROR":
+                return 2
+            if status == "DRIFT":
+                return 1
+            if status == "INCONCLUSIVE":
+                return 3
+            return 0
+
         if args.command == "evaluate-packet":
             return run_packet_evaluation(args)
 
@@ -422,6 +575,28 @@ def main():
         if args.command == "dashboard":
             output = generate_dashboard(args.history, args.output)
             print(f"Dashboard gerado: {output}")
+            return 0
+
+        if args.command == "serve-dashboard":
+            policy = load_json(args.policy)
+            errors = validate_policy(policy)
+            if errors:
+                for error in errors:
+                    print(f"ERRO DE POLÍTICA: {error}", file=sys.stderr)
+                return 2
+
+            serve_live_dashboard(
+                policy_path=args.policy,
+                host=args.host,
+                port=args.port,
+                source=args.source,
+                interval_seconds=args.interval_ms / 1000.0,
+                timeout_seconds=args.timeout,
+                allow_remote=args.allow_remote,
+                token_env=args.token_env,
+                trusted_transport=args.trusted_transport,
+                sudo_readonly=args.sudo_readonly,
+            )
             return 0
 
         if args.command == "compare-policy":
@@ -694,7 +869,8 @@ def main():
     except ValueError as exc:
         if args.command not in {
             "compare-policy", "compare-live", "compare-iptables-save",
-            "analyze-rule-conflicts", "analyze-snapshot", "analyze-chain-flow", "monitor", "dashboard"
+            "analyze-rule-conflicts", "analyze-snapshot", "analyze-chain-flow",
+            "monitor", "dashboard", "serve-dashboard", "collect"
         }:
             raise
         print(f"ERRO: {exc}", file=sys.stderr)
