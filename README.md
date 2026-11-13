@@ -24,7 +24,7 @@ The **Cyber Counterproof Engine (CCE)** is a defensive cybersecurity project bui
 - **Chain-flow analysis:** maps explicit iptables jump/goto references, structural reachability from base chains, unresolved targets, and potential recursive chain components.
 - **Policy-aware consolidated analysis:** optionally compares declared base-chain policies and supported rule selectors with supplied IPv4/IPv6 snapshots, retaining policy evidence hashes.
 - **Container packaging:** provides a Docker image that runs the CLI as a non-root user.
-- **Cross-platform adapter foundation:** detects Linux, Windows, and macOS; Linux Netfilter and Windows Defender Firewall adapters are implemented, while macOS support remains planned.
+- **Cross-platform adapter foundation:** platform detection and firewall adapters for Linux Netfilter and Windows Defender Firewall.
 
 ## Platform support and validation
 
@@ -34,9 +34,8 @@ CCE uses a shared adapter contract and platform detection. Adapter implementatio
 |---|---|---|
 | Linux | Netfilter: `iptables-save`, `ip6tables-save`, and nftables read-only collection | Implemented; real read-only collection executed on Manjaro Linux |
 | Windows | Windows Defender Firewall through PowerShell and `NetSecurity` / `ActiveStore` | Adapter implemented and simulated tests present; real Windows 11 validation remains open ([#20](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20)) |
-| macOS | PF and Application Firewall | Planned; not implemented ([#21](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21)) |
 
-A shared adapter interface does not mean every platform has equivalent feature coverage or operational validation. The Linux adapter is the only adapter in this project state that has been exercised against a real host. Windows and macOS support must not be represented as production-validated.
+A shared adapter interface does not mean every platform has equivalent feature coverage or operational validation. The Linux adapter is the only adapter in this project state that has been exercised against a real host. Windows support must not be represented as production-validated.
 
 
 The repository defines automated security checks in GitHub Actions. The workflows run on code changes and, where applicable, on a schedule.
@@ -196,7 +195,7 @@ The same commands can be run with **python -m cce.cli** after the project is ins
 
 ## Current roadmap
 
-The implementation status, evidence, known limitations and prioritised work are maintained in [docs/ROADMAP.md](docs/ROADMAP.md). Exact input/output interface comparison is implemented and integrated ([#17](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/17), closed). Active work: [#18 partial branch aggregation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18), [#19 native nftables semantics](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19), [#20 real Windows validation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20), and [#21 macOS adapters](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21).
+The implementation status, evidence, known limitations and prioritised work are maintained in [docs/ROADMAP.md](docs/ROADMAP.md). Exact input/output interface comparison is implemented and integrated ([#17](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/17), closed). Active work: [#18 partial branch aggregation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18), [#19 native nftables semantics](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19), and [#20 real Windows validation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20).
 
 ## Security scope and limitations
 
