@@ -20,7 +20,6 @@ O CCE separa a validação de entradas, deteção da plataforma, recolha por ada
 |---|---|---|---|
 | Linux | Netfilter | `iptables-save`, `ip6tables-save`, `nft -j list ruleset` | Implementado e validado por recolha real em Manjaro |
 | Windows | Defender Firewall | PowerShell / `NetSecurity` / `ActiveStore` | Implementado; testes simulados, validação real pendente |
-| macOS | PF / Application Firewall | A definir através de interfaces read-only suportadas | Planeado |
 
 As fontes iptables e nftables são apresentadas separadamente. Em sistemas iptables-nft pode existir sobreposição entre a camada de compatibilidade e o ruleset nativo; somar os inventários como se fossem regras independentes seria incorreto.
 
