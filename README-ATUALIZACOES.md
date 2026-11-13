@@ -28,7 +28,6 @@ Este documento regista capacidades implementadas, validações efetivamente exec
 - Deteção de plataforma e contrato comum para adaptadores.
 - Linux Netfilter: `iptables-save`, `ip6tables-save` e leitura JSON nftables.
 - Windows Defender Firewall: adaptador PowerShell/NetSecurity com leitura de `ActiveStore`; cobertura ainda validada por testes simulados, sem validação real em Windows 11.
-- macOS PF e Application Firewall: planeados, ainda não implementados.
 - Fontes iptables e nftables são reportadas separadamente para evitar dupla contagem da camada de compatibilidade iptables-nft.
 
 ### Dashboard em tempo real
@@ -50,7 +49,6 @@ Este documento regista capacidades implementadas, validações efetivamente exec
 |---|---|---|
 | Linux | Netfilter / iptables / nftables | Implementado e executado em recolha read-only real no Manjaro |
 | Windows | Defender Firewall / NetSecurity | Implementado; testes simulados; validação real em Windows 11 pendente ([#20](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20)) |
-| macOS | PF / Application Firewall | Planeado, não implementado ([#21](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21)) |
 
 ## 3. Validação local e CI remota confirmadas em 13-11-2026
 
@@ -92,9 +90,8 @@ O bloqueio atual não é a interpretação de interfaces exatas. As comparaçõe
 1. **Agregação de ramos:** não agrega ainda múltiplos ramos parciais JUMP/GOTO para provar cobertura integral ([#18](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18)).
 2. **nftables:** análise semântica nativa de regras ainda limitada; não existe alegação de cobertura integral ([#19](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19)).
 3. **Windows:** falta validar o adaptador num host Windows 11 real ([#20](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20)).
-4. **macOS:** PF e Application Firewall ainda não têm adaptadores ([#21](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21)).
-5. **Kernel e tráfego:** a comparação estática e a avaliação simplificada não provam o comportamento real de todos os pacotes no kernel.
-6. **Dashboard:** recolhe por polling; não é captura de eventos kernel/netlink e não garante latência end-to-end fixa.
+4. **Kernel e tráfego:** a comparação estática e a avaliação simplificada não provam o comportamento real de todos os pacotes no kernel.
+5. **Dashboard:** recolhe por polling; não é captura de eventos kernel/netlink e não garante latência end-to-end fixa.
 
 ## 5. Registo de Issues
 
@@ -103,7 +100,6 @@ O bloqueio atual não é a interpretação de interfaces exatas. As comparaçõe
 - [#18 — Agregação de ramos parciais JUMP/GOTO](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18) — trabalho futuro.
 - [#19 — Cobertura semântica nativa nftables](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19) — trabalho futuro.
 - [#20 — Validação real Windows 11](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20) — trabalho futuro.
-- [#21 — Adaptadores macOS PF/Application Firewall](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21) — trabalho futuro.
 
 ## 6. Política de segurança do desenvolvimento
 
