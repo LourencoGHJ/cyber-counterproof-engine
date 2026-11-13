@@ -80,7 +80,7 @@ Adding workflows does not enable branch protection automatically. Review the exa
 
 ## Latest local validation record (2026-11-13)
 
-The Manjaro development working tree recorded the following results:
+The Manjaro validation for code commit `d98996c0d728b40a7e2279e86cf83362d018bf3b` (integrated through PR #15, merge commit `a6a1b22da8db7c6a117c8481c4f337d2c9a664d9`) recorded the following local results:
 
 - Full pytest suite: **295 passed**.
 - Bandit: **No issues identified**; 12 Low, 0 Medium, 0 High severity findings.
@@ -88,7 +88,7 @@ The Manjaro development working tree recorded the following results:
 - `pip check`: no broken requirements.
 - `git diff --check`: clean.
 
-These are local working-tree results recorded before publication of the corresponding changes to the remote feature branch. They are not a substitute for GitHub Actions on the published commit. A clean scan does not prove the absence of all vulnerabilities.
+The corresponding published commit passed all four GitHub Actions workflows: DevSecOps CI, CodeQL, Secret Scanning, and Container Security. The pytest, Bandit, pip-audit, and pip-check results above are local Manjaro results; the GitHub Actions result is the independent remote validation for the published commit. A clean scan does not prove the absence of all vulnerabilities.
 
 ## Limitations and maintenance
 
