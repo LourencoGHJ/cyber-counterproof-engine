@@ -30,7 +30,6 @@ O Cyber Counterproof Engine (CCE) é uma ferramenta defensiva de validação, in
 - A agregação de múltiplos ramos parciais JUMP/GOTO está pendente ([#18](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18)).
 - A análise nftables é limitada a políticas de base chains e inventário estrutural suportado ([#19](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19)).
 - O adaptador Windows existe, mas falta validação num host real Windows 11 ([#20](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20)).
-- Os adaptadores macOS PF/Application Firewall ainda não foram implementados ([#21](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21)).
 - A avaliação de tráfego é um modelo simplificado, não uma implementação completa do Netfilter.
 
 ## Desenvolvimento e validação
