@@ -62,10 +62,11 @@ O dashboard recebe os resultados do coletor, disponibiliza endpoints GET e envia
 
 ## 8. Validação registada
 
-Na árvore de trabalho local Manjaro, em 13-11-2026:
+Na validação local Manjaro do commit publicado `d98996c0d728b40a7e2279e86cf83362d018bf3b`, integrado na `main` pelo merge commit `a6a1b22da8db7c6a117c8481c4f337d2c9a664d9`, em 13-11-2026:
 - 295 testes passaram.
 - Bandit não identificou issues (0 Medium/High).
 - pip-audit não encontrou vulnerabilidades nas dependências não editáveis verificadas; a distribuição CCE editável foi ignorada.
+- Os quatro workflows GitHub Actions do commit publicado passaram (DevSecOps CI, CodeQL, Secret Scanning e Container Security).
 - A recolha read-only real produziu estado global `INCONCLUSIVE`, com cobertura nftables limitada e quatro comparações semânticas ainda bloqueadas por ramos parciais.
 
 Ver [README-ATUALIZACOES.md](../README-ATUALIZACOES.md) e [docs/ROADMAP.md](ROADMAP.md) para o registo e as próximas tarefas.
