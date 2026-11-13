@@ -51,6 +51,9 @@ $rules = @(
         $interfaces = Get-NetFirewallInterfaceFilter `
             -AssociatedNetFirewallRule $rule -ErrorAction SilentlyContinue
 
+        $interfaceTypeFilter = Get-NetFirewallInterfaceTypeFilter `
+            -AssociatedNetFirewallRule $rule -ErrorAction SilentlyContinue
+
         $protocol = @()
         $localPorts = @()
         $remotePorts = @()
@@ -80,8 +83,11 @@ $rules = @(
             $serviceName = @($service.Service | ForEach-Object { [string]$_ })
         }
 
+        if ($null -ne $interfaceTypeFilter) {
+            $interfaceTypes = @($interfaceTypeFilter.InterfaceType | ForEach-Object { [string]$_ })
+        }
+
         if ($null -ne $interfaces) {
-            $interfaceTypes = @($interfaces.InterfaceType | ForEach-Object { [string]$_ })
             $interfaceAliases = @($interfaces.InterfaceAlias | ForEach-Object { [string]$_ })
         }
 
