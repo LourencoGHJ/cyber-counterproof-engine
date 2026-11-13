@@ -196,7 +196,7 @@ The same commands can be run with **python -m cce.cli** after the project is ins
 
 ## Current roadmap
 
-The implementation status, evidence, known limitations and prioritised work are maintained in [docs/ROADMAP.md](docs/ROADMAP.md). Active work items: [#17 interface-aware policy comparison](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/17), [#18 partial branch aggregation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18), [#19 native nftables semantics](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19), [#20 real Windows validation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20), and [#21 macOS adapters](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21).
+The implementation status, evidence, known limitations and prioritised work are maintained in [docs/ROADMAP.md](docs/ROADMAP.md). Exact input/output interface comparison is implemented and integrated ([#17](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/17), closed). Active work: [#18 partial branch aggregation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/18), [#19 native nftables semantics](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/19), [#20 real Windows validation](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/20), and [#21 macOS adapters](https://github.com/LourencoGHJ/cyber-counterproof-engine/issues/21).
 
 ## Security scope and limitations
 
