@@ -108,7 +108,7 @@ On Linux, the live dashboard collects `iptables-save`, `ip6tables-save`, and `nf
 
 On Windows, `--source auto` selects the Windows Defender Firewall adapter and queries the local `ActiveStore` through PowerShell and the `NetSecurity` module. Run the service on the same Windows host whose firewall is being inspected:
 
-    .venv\\Scripts\\python.exe -m cce.cli serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 5000 --timeout 60
+    .\\.venv\\Scripts\\python.exe -m cce.cli serve-dashboard --policy config/policy.json --host 127.0.0.1 --port 8765 --source auto --interval-ms 10000 --timeout 60
 
 Open **http://127.0.0.1:8765/** in a browser. The Windows view presents aggregate rule counts (total, enabled, disabled, inbound, outbound, allow and block), profile state and default profile actions. It deliberately does not publish individual rules, application paths, addresses, ports or interface selectors.
 
