@@ -251,3 +251,9 @@ Mandatory branch protection, image signing, and secure container publishing stil
 4. Expand test coverage, especially for malformed input and failure handling.
 
 CCE is a practical learning project intended to demonstrate **Security Engineering** and **DevSecOps** skills, with explicit documentation of each control's scope and limitations.
+
+## GitHub API security auditor
+
+CCE also includes a separate, read-only integration that uses the GitHub REST API to inspect repository security hygiene and produce a JSON report.
+
+See [the GitHub Security Auditor documentation](integrations/github-security-auditor/README.md) for setup, permissions, usage and limitations.
