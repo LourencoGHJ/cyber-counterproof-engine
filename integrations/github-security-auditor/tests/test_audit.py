@@ -30,6 +30,30 @@ class AuditorTests(unittest.TestCase):
         self.assertEqual(statuses["Secret scanning workflow"], "unknown")
 
     @patch("audit.request_json")
+    def test_custom_ref_is_used_for_all_checks(self, request_json):
+        def fake(path, token):
+            if path == "/repos/example/project":
+                return {
+                    "default_branch": "main",
+                    "html_url": "https://github.com/example/project",
+                    "full_name": "example/project",
+                    "visibility": "public",
+                }
+            if "contents/SECURITY.md?ref=feature%2Fsecurity" in path:
+                return {"name": "SECURITY.md"}
+            if "contents/.github/workflows?ref=feature%2Fsecurity" in path:
+                return []
+            raise AssertionError(path)
+
+        request_json.side_effect = fake
+        report = audit("example", "project", None, "feature/security")
+
+        self.assertEqual(report["default_branch"], "main")
+        self.assertEqual(report["audited_ref"], "feature/security")
+        self.assertEqual(report["checks"][0]["status"], "present")
+
+
+    @patch("audit.request_json")
     def test_missing_security_file_is_reported(self, request_json):
         def fake(path, token):
             if path == "/repos/example/project":
